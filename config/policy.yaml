@@ -1,0 +1,38 @@
+# Hard guardrails enforced in code (worker/safety/policy.py), independently of
+# what the LLM decides. The LLM is *told* the company rules, but these checks
+# make sure that even a confused or manipulated model cannot break them.
+
+# The agent may only talk to these hosts (browser navigation and HTTP calls).
+allowed_hosts:
+  - localhost:8001
+  - localhost:8002
+  - localhost:8003
+  - 127.0.0.1:8001
+  - 127.0.0.1:8002
+  - 127.0.0.1:8003
+
+# Paths that are never allowed, even on allowed hosts (sandbox admin endpoints).
+blocked_path_prefixes:
+  - /__admin
+
+# Actions that pause the run and ask the human for approval before executing.
+# "applies_to" values:
+#   form_submit - a browser form submission that changes data (POST)
+#   http_write  - an HTTP POST/PUT/PATCH/DELETE request
+#   click       - clicking a button/link (matched on its visible text)
+approval_rules:
+  - id: high_value_amount
+    description: Writing a monetary amount above 10,000.00 requires human approval.
+    applies_to: [form_submit, http_write]
+    field_pattern: "(?i)^(amount|total|total_amount|value)$"
+    greater_than: 10000
+
+  - id: destructive_or_payment_action
+    description: Deleting records or initiating payments requires human approval.
+    applies_to: [click, form_submit, http_write]
+    text_pattern: "(?i)\\b(delete|remove|void|pay now|make payment|approve payment|wire|transfer funds)\\b"
+
+  - id: http_delete
+    description: HTTP DELETE requests always require human approval.
+    applies_to: [http_write]
+    methods: [DELETE]

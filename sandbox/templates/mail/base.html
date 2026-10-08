@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}Inbox{% endblock %} · Northwind Mail</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; margin: 0; background: #fafafa; color: #202124; }
+  header { background: #fff; border-bottom: 1px solid #ddd; padding: 12px 24px; display: flex; justify-content: space-between; }
+  header b { color: #c5221f; font-size: 20px; }
+  main { max-width: 960px; margin: 20px auto; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; }
+  .row { display: grid; grid-template-columns: 220px 1fr 140px; gap: 12px; padding: 12px 18px; border-bottom: 1px solid #eee; text-decoration: none; color: inherit; }
+  .row:hover { background: #f1f3f4; }
+  .from { font-weight: bold; }
+  .date { color: #5f6368; text-align: right; font-size: 13px; }
+  .msg { padding: 20px 26px; }
+  .msg pre { white-space: pre-wrap; font-family: inherit; font-size: 15px; line-height: 1.5; }
+  .att { display: inline-block; border: 1px solid #ccc; border-radius: 6px; padding: 8px 12px; margin-top: 10px; }
+  .meta { color: #5f6368; font-size: 13px; }
+</style>
+</head>
+<body>
+<header><b>Northwind Mail</b> <span>Mailbox: {{ mailbox }}</span></header>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Task Worker</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">◆</span> AI Task Worker <span id="model" class="chip"></span></div>
+  <nav class="systems" id="systems"></nav>
+  <div class="controls">
+    <label>Chaos
+      <select id="chaos" title="Inject failures into the sandbox apps">
+        <option value="off">off</option><option value="mild">mild</option><option value="hard">hard</option>
+      </select>
+    </label>
+    <button id="reset" class="ghost" title="Reset sandbox data to the seed state">Reset data</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <section class="panel">
+      <h2>New task</h2>
+      <textarea id="task" rows="5" placeholder="Describe what you need done, e.g. 'Find the latest invoice from Acme and enter it into the ERP'"></textarea>
+      <button id="run" class="primary">Run task</button>
+      <p id="keywarn" class="warn hidden">No API key found. Set ANTHROPIC_API_KEY in .env and restart.</p>
+      <div class="samples" id="samples"></div>
+    </section>
+    <section class="panel">
+      <h2>History</h2>
+      <ul id="history" class="history"></ul>
+    </section>
+  </aside>
+
+  <main class="main">
+    <div id="empty" class="empty">
+      <h1>Give the worker a goal, not a script.</h1>
+      <p>It understands the request, plans, operates the company apps in a real browser, recovers from errors,
+         asks you when it must, verifies the result independently and reports back with evidence.</p>
+    </div>
+
+    <div id="runview" class="hidden">
+      <section class="panel runhead">
+        <div class="runtitle"><span id="status" class="pill"></span><span id="runtask"></span></div>
+        <ol class="phases" id="phases">
+          <li data-p="understand">Understand</li><li data-p="execute">Execute</li>
+          <li data-p="verify">Verify</li><li data-p="report">Report</li>
+        </ol>
+        <div class="metrics" id="metrics"></div>
+        <button id="cancel" class="ghost danger hidden">Cancel run</button>
+      </section>
+
+      <section id="human" class="panel human hidden"></section>
+      <section id="result" class="panel result hidden"></section>
+
+      <div class="cols">
+        <section class="panel timeline-panel">
+          <h2>Activity</h2>
+          <div id="timeline" class="timeline"></div>
+        </section>
+        <div class="side">
+          <section class="panel">
+            <h2>Live view <span id="liveurl" class="muted small"></span></h2>
+            <div class="screen"><img id="shot" alt="Latest browser screenshot"><p id="noshot" class="muted">No screenshot yet.</p></div>
+          </section>
+          <section class="panel"><h2>Plan</h2><ol id="plan" class="plan"></ol></section>
+          <section class="panel"><h2>Working memory</h2><ul id="facts" class="facts"></ul></section>
+          <section class="panel"><h2>Changes made</h2><ul id="actions" class="facts"></ul></section>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

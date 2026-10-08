@@ -1,0 +1,32 @@
+{% extends "erp/base.html" %}
+{% block title %}New bill{% endblock %}
+{% block content %}
+<h2>Enter a new bill (supplier invoice)</h2>
+{% if errors %}<div class="alert" role="alert">The bill was not saved. Please correct the highlighted fields.</div>{% endif %}
+<form method="post" action="/bills/new" id="new-bill">
+  <div class="field"><label for="vendor_id">Vendor</label>
+    <select id="vendor_id" name="vendor_id">
+      <option value="">-- select vendor --</option>
+      {% for v in vendors %}<option value="{{ v.vendor_id }}" {% if v.vendor_id == form.vendor_id %}selected{% endif %}>{{ v.name }} ({{ v.vendor_id }})</option>{% endfor %}
+    </select>
+    {% if errors.vendor_id %}<div class="err">{{ errors.vendor_id }}</div>{% endif %}</div>
+  <div class="field"><label for="invoice_number">Supplier invoice number</label>
+    <input id="invoice_number" name="invoice_number" value="{{ form.invoice_number }}">
+    {% if errors.invoice_number %}<div class="err">{{ errors.invoice_number }}</div>{% endif %}</div>
+  <div class="field"><label for="invoice_date">Invoice date</label>
+    <input id="invoice_date" name="invoice_date" value="{{ form.invoice_date }}" placeholder="YYYY-MM-DD">
+    {% if errors.invoice_date %}<div class="err">{{ errors.invoice_date }}</div>{% endif %}</div>
+  <div class="field"><label for="due_date">Due date</label>
+    <input id="due_date" name="due_date" value="{{ form.due_date }}" placeholder="YYYY-MM-DD">
+    {% if errors.due_date %}<div class="err">{{ errors.due_date }}</div>{% endif %}</div>
+  <div class="field"><label for="amount">Total amount</label>
+    <input id="amount" name="amount" value="{{ form.amount }}" placeholder="0.00">
+    {% if errors.amount %}<div class="err">{{ errors.amount }}</div>{% endif %}</div>
+  <div class="field"><label for="currency">Currency</label>
+    <select id="currency" name="currency">{% for c in currencies %}<option {% if c == form.currency %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+    {% if errors.currency %}<div class="err">{{ errors.currency }}</div>{% endif %}</div>
+  <div class="field"><label for="description">Description (optional)</label>
+    <input id="description" name="description" value="{{ form.description }}"></div>
+  <button type="submit">Save bill</button>
+</form>
+{% endblock %}

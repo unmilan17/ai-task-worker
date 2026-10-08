@@ -1,0 +1,13 @@
+{% extends "mail/base.html" %}
+{% block title %}{{ e.subject }}{% endblock %}
+{% block content %}
+<div class="msg">
+  <p><a href="/">&larr; Back to inbox</a></p>
+  <h2>{{ e.subject }}</h2>
+  <p class="meta">From: {{ e.sender_name }} &lt;{{ e.sender_email }}&gt;<br>To: {{ mailbox }}<br>Received: {{ e.received }}</p>
+  <pre>{{ e.body }}</pre>
+  {% if e.attachment %}
+  <div class="att">&#128206; Attachment: <a href="/attachments/{{ e.email_id }}/{{ e.attachment }}.pdf">{{ e.attachment }}.pdf</a></div>
+  {% endif %}
+</div>
+{% endblock %}

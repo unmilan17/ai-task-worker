@@ -1,0 +1,17 @@
+{% extends "erp/base.html" %}
+{% block title %}{{ b.bill_id }}{% endblock %}
+{% block content %}
+{% if created %}<div class="flash" role="status">Bill {{ b.bill_id }} was created successfully and is pending approval.</div>{% endif %}
+<h2>Bill {{ b.bill_id }}</h2>
+<table style="width:auto">
+<tr><th>Vendor</th><td>{{ b.vendor_name }} ({{ b.vendor_id }})</td></tr>
+<tr><th>Supplier invoice #</th><td>{{ b.invoice_number }}</td></tr>
+<tr><th>Invoice date</th><td>{{ b.invoice_date }}</td></tr>
+<tr><th>Due date</th><td>{{ b.due_date }}</td></tr>
+<tr><th>Amount</th><td>{{ b.amount_cents | cents }} {{ b.currency }}</td></tr>
+<tr><th>Description</th><td>{{ b.description }}</td></tr>
+<tr><th>Status</th><td>{{ b.status }}</td></tr>
+<tr><th>Created</th><td>{{ b.created_at }} via {{ b.created_via }}</td></tr>
+</table>
+<p><a href="/bills">&larr; All bills</a></p>
+{% endblock %}

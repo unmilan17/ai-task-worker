@@ -1,0 +1,12 @@
+{% extends "erp/base.html" %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<h2>Northwind ERP login</h2>
+{% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
+<form method="post" action="/login">
+  <input type="hidden" name="next" value="{{ next }}">
+  <div class="field"><label for="username">User ID</label><input id="username" name="username"></div>
+  <div class="field"><label for="password">Password</label><input id="password" name="password" type="password"></div>
+  <button type="submit">Log in</button>
+</form>
+{% endblock %}

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run report {{ r.run_id }}</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b2430; --muted:#5d6b7a; --line:#e3e7ec; --ok:#1f7a4d; --bad:#b42318; --warn:#a15c07; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--ink); margin: 0; padding: 24px; }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0 0 6px; } h2 { font-size: 16px; margin: 0 0 10px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .status { display: inline-block; padding: 3px 10px; border-radius: 12px; font-weight: 600; font-size: 13px; }
+  .succeeded { background: #dcf3e6; color: var(--ok); } .failed, .error { background: #fde4e1; color: var(--bad); }
+  .blocked, .needs_review, .cancelled { background: #fdf0d9; color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .yes { color: var(--ok); font-weight: 600; } .no { color: var(--bad); font-weight: 600; }
+  .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .shots figure { margin: 0; } .shots img { width: 100%; border: 1px solid var(--line); border-radius: 6px; }
+  figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  code { background: #eef1f4; padding: 1px 4px; border-radius: 4px; }
+  .summary { font-size: 16px; line-height: 1.5; white-space: pre-wrap; }
+</style>
+</head>
+<body><div class="wrap">
+
+<div class="card">
+  <h1>AI Task Worker &mdash; run report</h1>
+  <p class="muted">Run {{ r.run_id }} &middot; model {{ r.metrics.model }} &middot; {{ r.metrics.duration_s }} s &middot;
+     {{ r.metrics.tool_steps }} tool steps &middot; {{ r.metrics.llm_calls }} LLM calls &middot; ~${{ r.metrics.cost_usd }}</p>
+  <p><b>Task:</b> {{ r.task }}</p>
+  <p><span class="status {{ r.status }}">{{ r.status | upper }}</span>
+     {% if r.verified %}<span class="status succeeded">independently verified</span>{% endif %}
+     <span class="muted">{{ r.status_reason }}</span></p>
+  <p class="summary">{{ r.summary }}</p>
+  {% if r.notes_for_user %}<ul>{% for n in r.notes_for_user %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+</div>
+
+{% if r.verification %}
+<div class="card"><h2>Verification</h2>
+{% for v in r.verification %}
+  <p><b>Round {{ loop.index }}</b> ({{ v.method }}): {% if v.passed %}<span class="yes">PASSED</span>{% else %}<span class="no">FAILED</span>{% endif %} &mdash; {{ v.summary }}</p>
+  {% if v.criteria %}<table><tr><th>Criterion</th><th>Met</th><th>Evidence observed</th></tr>
+  {% for c in v.criteria %}<tr><td>{{ c.criterion }}</td><td class="{{ 'yes' if c.met else 'no' }}">{{ 'yes' if c.met else 'no' }}</td><td>{{ c.evidence }}</td></tr>{% endfor %}
+  </table>{% endif %}
+  {% if v.issues %}<ul>{% for i in v.issues %}<li>{{ i }}</li>{% endfor %}</ul>{% endif %}
+{% endfor %}
+</div>
+{% endif %}
+
+{% if r.facts %}
+<div class="card"><h2>Facts discovered (with provenance)</h2>
+<table><tr><th>Fact</th><th>Value</th><th>Source</th><th>Step</th></tr>
+{% for f in r.facts %}<tr><td><code>{{ f.key }}</code></td><td>{{ f.value }}</td><td>{{ f.source }}{% if f.url %}<br><span class="muted">{{ f.url }}</span>{% endif %}</td><td>{{ f.step }}</td></tr>{% endfor %}
+</table></div>
+{% endif %}
+
+<div class="card"><h2>Changes made to systems</h2>
+{% if r.actions %}<table><tr><th>Step</th><th>Action</th><th>Details</th></tr>
+{% for a in r.actions %}<tr><td>{{ a.step }}</td><td>{{ a.description }}</td><td class="muted">{% if a.fields %}{{ a.fields }}{% elif a.request %}{{ a.request }}{% elif a.path %}{{ a.path }}{% endif %}</td></tr>{% endfor %}
+</table>{% else %}<p class="muted">No data was changed.</p>{% endif %}
+</div>
+
+{% if r.human_interactions %}
+<div class="card"><h2>Questions &amp; approvals</h2>
+<table><tr><th>Type</th><th>Asked</th><th>Answer</th></tr>
+{% for h in r.human_interactions %}<tr><td>{{ h.kind }}</td><td>{{ h.question }}</td>
+<td>{% if h.kind == 'approval' %}{{ 'approved' if h.response.approved else ('no answer' if h.response.timed_out else 'rejected') }}{% endif %} {{ h.response.answer }}</td></tr>{% endfor %}
+</table></div>
+{% endif %}
+
+<div class="card"><h2>Reliability</h2>
+<p class="muted">Automatic retries: {{ r.reliability.auto_retries }} &middot; failures by kind: {{ r.reliability.tool_failures_by_kind }} &middot;
+reflections: {{ r.reliability.reflections_triggered }} &middot; policy blocks: {{ r.reliability.policy_blocks }} &middot; verification rounds: {{ r.reliability.verification_rounds }}</p>
+</div>
+
+{% if r.plan %}
+<div class="card"><h2>Final plan</h2><ol>{% for s in r.plan %}<li>[{{ s.status }}] {{ s.title }}{% if s.note %} <span class="muted">&mdash; {{ s.note }}</span>{% endif %}</li>{% endfor %}</ol></div>
+{% endif %}
+
+{% if r.evidence %}
+<div class="card"><h2>Evidence screenshots</h2><div class="shots">
+{% for e in r.evidence %}<figure><a href="{{ e.path }}"><img src="{{ e.path }}" alt="{{ e.caption }}"></a><figcaption>Step {{ e.step }}: {{ e.caption }}</figcaption></figure>{% endfor %}
+</div></div>
+{% endif %}
+
+{% if r.video %}
+<div class="card"><h2>Session recording</h2><video src="{{ r.video }}" controls style="width:100%"></video></div>
+{% endif %}
+
+<p class="muted">Full step-by-step audit trail: <code>trace.jsonl</code> in this folder.</p>
+</div></body>
+</html>

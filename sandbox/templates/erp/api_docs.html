@@ -1,0 +1,14 @@
+{% extends "erp/base.html" %}
+{% block title %}Developer API{% endblock %}
+{% block content %}
+<h2>Northwind ERP REST API (v1)</h2>
+<p>All requests require the header <code>X-API-Key: &lt;your key&gt;</code>. Base URL: <code>{{ base }}</code>. JSON in, JSON out.</p>
+<table>
+<tr><th>Method</th><th>Path</th><th>Description</th></tr>
+<tr><td>GET</td><td>/api/vendors</td><td>List vendors (vendor_id, name, legal_name, email, tax_id).</td></tr>
+<tr><td>GET</td><td>/api/bills</td><td>List bills. Optional query params: vendor_id, invoice_number, status, due_after, due_before (YYYY-MM-DD).</td></tr>
+<tr><td>GET</td><td>/api/bills/{bill_id}</td><td>Get one bill.</td></tr>
+<tr><td>POST</td><td>/api/bills</td><td>Create a bill. JSON body fields: vendor_id (e.g. V-001), invoice_number, invoice_date (YYYY-MM-DD), due_date (YYYY-MM-DD), amount (e.g. "1234.56"), currency (USD/EUR/GBP/INR), description (optional). Returns 201 with the created bill, 409 for duplicates, 422 for validation errors.</td></tr>
+</table>
+<p class="hint">The API applies the same validation rules as the web form.</p>
+{% endblock %}

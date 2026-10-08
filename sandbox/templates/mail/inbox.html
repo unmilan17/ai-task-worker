@@ -1,0 +1,11 @@
+{% extends "mail/base.html" %}
+{% block content %}
+<h2 style="padding: 0 18px">Inbox ({{ emails | length }})</h2>
+{% for e in emails %}
+<a class="row" href="/message/{{ e.email_id }}">
+  <span class="from">{{ e.sender_name }}</span>
+  <span>{{ e.subject }}{% if e.attachment %} &#128206;{% endif %}</span>
+  <span class="date">{{ e.received }}</span>
+</a>
+{% endfor %}
+{% endblock %}

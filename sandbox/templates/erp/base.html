@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}Northwind ERP{% endblock %} · Northwind ERP</title>
+<style>
+  body { font-family: Tahoma, Verdana, sans-serif; margin: 0; background: #eef0ec; color: #222; font-size: 14px; }
+  .top { background: #2f4f2f; color: #fff; padding: 10px 20px; display: flex; justify-content: space-between; }
+  .top b { font-size: 17px; }
+  .top a { color: #d8ecd0; margin-left: 14px; }
+  .wrap { display: flex; }
+  nav.side { width: 190px; background: #dfe5da; min-height: calc(100vh - 42px); padding: 14px; box-sizing: border-box; }
+  nav.side a { display: block; color: #234; padding: 6px 4px; text-decoration: none; }
+  nav.side a:hover { background: #cfd8c8; }
+  main { flex: 1; padding: 18px 26px; }
+  table { border-collapse: collapse; width: 100%; background: #fff; }
+  th, td { border: 1px solid #c9cfc4; padding: 6px 8px; text-align: left; }
+  th { background: #e8ece4; }
+  td.num { text-align: right; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-weight: bold; margin-bottom: 3px; }
+  .field input, .field select, .field textarea { width: 320px; padding: 5px; font-size: 14px; }
+  .err { color: #b00020; font-size: 13px; }
+  .flash { background: #dff0d8; border: 1px solid #9c9; padding: 8px 12px; margin-bottom: 12px; }
+  .alert { background: #f8d7da; border: 1px solid #e99; padding: 8px 12px; margin-bottom: 12px; }
+  button, .btn { background: #2f6f2f; color: #fff; border: 0; padding: 7px 16px; cursor: pointer; font-size: 14px; text-decoration: none; }
+  .hint { color: #667; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="top"><b>Northwind ERP &mdash; Accounts Payable</b>
+  <span>{% if user %}User: {{ user }} <a href="/logout">Log out</a>{% endif %}</span></div>
+<div class="wrap">
+{% if user %}
+<nav class="side">
+  <a href="/">Dashboard</a>
+  <a href="/bills">Bills</a>
+  <a href="/bills/new">+ New bill</a>
+  <a href="/vendors">Vendors</a>
+  <a href="/api/docs">Developer API</a>
+</nav>
+{% endif %}
+<main>{% block content %}{% endblock %}</main>
+</div>
+</body>
+</html>

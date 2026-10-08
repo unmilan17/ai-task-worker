@@ -1,0 +1,10 @@
+{% extends "erp/base.html" %}
+{% block title %}Vendors{% endblock %}
+{% block content %}
+<h2>Vendors</h2>
+<table>
+<tr><th>Vendor ID</th><th>Name</th><th>Legal name</th><th>Billing e-mail</th><th>Tax ID</th></tr>
+{% for v in vendors %}<tr><td>{{ v.vendor_id }}</td><td>{{ v.name }}</td><td>{{ v.legal_name }}</td><td>{{ v.email }}</td><td>{{ v.tax_id }}</td></tr>{% endfor %}
+</table>
+<p class="hint">New vendors must be onboarded by the procurement team (not available in this module).</p>
+{% endblock %}
