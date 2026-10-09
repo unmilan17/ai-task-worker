@@ -44,6 +44,8 @@ providers return reasoning state that must be sent back unchanged on the next re
 Free API tiers cap **requests per minute (RPM)**, **tokens per minute (TPM)** and **requests per day (RPD)**.
 Going over returns HTTP 429. An agent is a worst case: dozens of large requests in a row. A *sliding-window rate
 limiter* remembers what was sent in the last 60 seconds and waits just long enough before the next request.
+A 429 body can also say *which* quota was hit and how long to wait (Gemini sends `QuotaFailure` and `RetryInfo`
+details), so per-minute limits can be waited out while a per-day limit is reported straight away.
 
 ### OpenAI-compatible API
 Many providers (Google Gemini, Groq, OpenRouter, Ollama...) accept the same "Chat Completions" request format

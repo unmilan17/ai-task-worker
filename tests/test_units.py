@@ -64,6 +64,36 @@ def test_http_delete_always_needs_approval():
     assert _rule("http_delete").matches(ProposedAction("http_write", "POST x", method="POST")) is None
 
 
+def test_guard_asks_once_per_action_even_when_several_rules_match():
+    from types import SimpleNamespace
+    from worker.runtime.human import ScriptedHumanChannel
+    from worker.safety.policy import Guard
+    human = ScriptedHumanChannel(approve=True)
+    ctx = SimpleNamespace(step=1, read_only=False, human=human, settings=SimpleNamespace(human_timeout_s=1),
+                          events=SimpleNamespace(emit=lambda *a, **k: None))
+    guard = Guard(Policy.from_file(PROJECT_ROOT / "config" / "policy.yaml"))
+    delete = ProposedAction("http_write", "DELETE http://localhost:8002/api/bills/B-1", method="DELETE",
+                            url="http://localhost:8002/api/bills/B-1")
+    asyncio.run(guard.authorize(delete, ctx))
+    assert len(human.log) == 1                               # one question, not one per matching rule
+    assert {d["rule"] for d in guard.decisions} == {"destructive_or_payment_action", "http_delete"}
+    asyncio.run(guard.authorize(delete, ctx))                # same approved action again: no new question
+    assert len(human.log) == 1
+
+
+def test_verifier_sees_what_the_user_decided():
+    from types import SimpleNamespace
+    from worker.core.verifier import user_decisions
+    from worker.runtime.events import EventBus
+    bus = EventBus("r")
+    bus.emit("human_request", request={"id": "q1", "kind": "clarification", "question": "Which invoice?"})
+    bus.emit("human_response", request_id="q1", response={"answer": "INIT-552"})
+    guard = SimpleNamespace(decisions=[{"action": "POST /api/bills", "reason": "amount > 10,000", "approved": True}])
+    text = user_decisions(SimpleNamespace(guard=guard, events=bus))
+    assert "POST /api/bills (amount > 10,000) -> APPROVED by the user" in text
+    assert "Which invoice? -> user answered: INIT-552" in text
+
+
 def test_approval_fingerprint_changes_with_payload():
     a = ProposedAction("http_write", "POST", fields={"amount": "18250"})
     b = ProposedAction("http_write", "POST", fields={"amount": "18251"})

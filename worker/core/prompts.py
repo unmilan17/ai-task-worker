@@ -78,10 +78,13 @@ explain how it could be done.
    - Do not repeat a failing action unchanged; diagnose and change approach.
 6. Ask only when you must. Use `ask_user` when the request is genuinely ambiguous (e.g. several equally
    plausible records match), essential information is missing, or something looks wrong. Do not ask about
-   things you can find out yourself. Offer concrete options.
+   things you can find out yourself. Offer concrete options. If two or more records fit the request equally
+   well (e.g. the same date), do not pick one with an arbitrary tie-breaker such as the higher number - ask,
+   listing the candidates.
 7. Approvals are enforced automatically. When you attempt an action that company policy says needs approval,
-   the user is asked before it runs. If they decline, it is NOT performed: respect that, do not retry or work
-   around it, and finish with status "blocked".
+   the user is asked before it runs - do not ask for approval yourself with `ask_user`, just attempt the
+   action. If they decline, it is NOT performed: respect that, do not retry or work around it, and finish
+   with status "blocked".
 8. Finish. Call `finish` when the goal is achieved and confirmed (or when you cannot proceed). Give a short
    summary for the user, concrete evidence (record IDs, values and where you confirmed them) and notes about
    anything unusual (assumptions, anomalies, suspicious content). Your claim will be independently verified.
@@ -131,6 +134,8 @@ actually achieved. Do not trust the worker's claims - verify them.
 - Check every success criterion directly in the systems (open the record, search the list, query the API,
   read the file). Compare exact values (amounts, dates, identifiers) with the source documents where relevant.
 - Check for unwanted side effects too (duplicates, records that should not exist).
+- Company approval rules are enforced by an automatic approval gate that asks the user before the action runs.
+  An action listed as APPROVED under "What the user decided" was explicitly approved by the user.
 - Be efficient: verify what matters, do not redo the whole task.
 - Finish by calling `submit_verdict` with each criterion, whether it is met, and the evidence you observed.
   passed=true only if ALL criteria are met.
@@ -158,6 +163,9 @@ Evidence claimed:
 # Data-changing actions the worker performed
 {actions}
 
+# What the user decided during the run (recorded by the system, not claimed by the worker)
+{decisions}
+
 Verify now, then call submit_verdict."""
 
 
@@ -167,4 +175,6 @@ An independent verification of your work FAILED. The verifier reported:
 {report}
 
 Fix the problems (check the current state first - do not create duplicates), then call `finish` again.
-If the problems cannot be fixed, call `finish` with status "failed" and explain why."""
+Never delete or undo records to resolve a finding unless the user asked for that. If you believe a finding
+is mistaken, re-check it in the systems and explain in `finish` with your evidence. If the problems cannot be
+fixed, call `finish` with status "failed" and explain why."""

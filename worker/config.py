@@ -68,7 +68,7 @@ class Settings:
 # Default model per provider when LLM_MODEL is not set. Free-tier model availability changes
 # over time - check the provider's console (e.g. Google AI Studio) and override LLM_MODEL if needed.
 DEFAULT_MODELS = {
-    "gemini": "gemini-3.8-flash",
+    "gemini": "gemini-3.5-flash-lite",   # free tier: gemini-3.8-flash allows only 20 requests/day
     "groq": "openai/gpt-oss-120b",
     "openrouter": "",            # pick a ":free" model on openrouter.ai and set LLM_MODEL
     "ollama": "qwen3:14b",

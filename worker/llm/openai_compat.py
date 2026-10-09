@@ -12,7 +12,9 @@ Things this adapter handles so the agent loop does not have to:
 * **Free-tier rate limits.** A client-side limiter spaces requests to stay
   under the provider's requests-per-minute and tokens-per-minute quotas
   (agents send many large requests in a row, which is exactly what free
-  tiers throttle). 429s that still happen are retried by the SDK with backoff.
+  tiers throttle). A 429 that still happens is read: per-minute limits are waited
+  out for the delay the provider asks for (and the limiter adopts the reported
+  limit); an exhausted *daily* quota stops the run at once with a clear message.
 * **Append-only history with provider extras preserved.** Assistant turns are
   stored as returned, including provider-specific fields on tool calls (Gemini
   attaches reasoning "thought signatures" there, which must be echoed back
@@ -55,10 +57,12 @@ class Preset:
 
 
 PRESETS: dict[str, Preset] = {
-    # Free tier: Flash / Flash-Lite models, no credit card. Limits are per project and change over
-    # time; check them in Google AI Studio. The defaults here are conservative.
+    # Free tier: Flash / Flash-Lite models, no credit card. Limits are per project and model and change
+    # over time; check them in Google AI Studio. Measured 2026-10: gemini-3.5-flash-lite (the default)
+    # took 12+ requests/minute and 500/day; gemini-3.8-flash allowed only 5/minute and 20/day.
+    # The limiter starts at 15/minute and lowers itself to whatever limit a 429 response reports.
     "gemini": Preset("https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY",
-                     rpm=8, tpm=200_000, reasoning_effort=True, vision=True,
+                     rpm=15, tpm=200_000, reasoning_effort=True, vision=True,
                      signup="https://aistudio.google.com/apikey"),
     # Free tier, no card, very fast - but small tokens-per-minute limits (see docs).
     "groq": Preset("https://api.groq.com/openai/v1", "GROQ_API_KEY",
@@ -164,6 +168,46 @@ def extract_json(text: str) -> str:
     return text[start:end + 1]
 
 
+@dataclass
+class QuotaError:
+    """What a 429 response says about the quota that was hit."""
+    daily: bool                  # a per-day quota: retrying today is pointless
+    retry_after: float | None    # seconds the provider asks us to wait
+    limit: int | None            # the quota value, e.g. 5 (requests per minute)
+    metric: str                  # quota id / metric name, for the error message
+
+
+def parse_quota_error(body: Any, message: str = "") -> QuotaError:
+    """Read a 429 body. Gemini sends google.rpc QuotaFailure + RetryInfo details; other providers
+    usually send only a message, so fall back to scanning the text ("retry in 32.6s", "per day")."""
+    if isinstance(body, list) and body:
+        body = body[0]
+    err = body.get("error", body) if isinstance(body, dict) else {}
+    if not isinstance(err, dict):
+        err = {}
+    details = err.get("details") or []
+    text = f"{message} {err.get('message', '')}"
+    retry_after = limit = None
+    metric = ""
+    for d in details if isinstance(details, list) else []:
+        if not isinstance(d, dict):
+            continue
+        if "retryDelay" in d:
+            m = re.match(r"([\d.]+)s", str(d["retryDelay"]))
+            retry_after = float(m.group(1)) if m else None
+        for v in d.get("violations") or []:
+            metric = v.get("quotaId") or v.get("quotaMetric") or metric
+            try:
+                limit = int(v.get("quotaValue"))
+            except (TypeError, ValueError):
+                pass
+    if retry_after is None:
+        m = re.search(r"retry in ([\d.]+)\s*s", text, re.I)
+        retry_after = float(m.group(1)) if m else None
+    daily = bool(re.search(r"per ?day|daily", metric + " " + text, re.I))
+    return QuotaError(daily=daily, retry_after=retry_after, limit=limit, metric=metric or "rate limit")
+
+
 def _estimate_tokens(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> int:
     return int(len(json.dumps(messages, default=str)) / 3.5 + len(json.dumps(tools or [])) / 3.5) + 500
 
@@ -183,8 +227,11 @@ class OpenAICompatClient(LLMClient):
         self.preset = PRESETS[provider]
         key = os.getenv(self.preset.key_env, "") if self.preset.key_env else "not-needed"
         self.key_missing = not key
+        # The SDK retries transient errors with a short backoff (seconds). Free-tier 429s ask for longer
+        # waits (often 30-60 s), so chat() handles those itself using the provider's retry delay.
         self.client = openai.AsyncOpenAI(api_key=key or "missing", base_url=base_url or self.preset.base_url,
-                                         max_retries=5, timeout=180)
+                                         max_retries=2, timeout=180)
+        self.rate_retries = 6
         self.effort = {"xhigh": "high", "max": "high"}.get(effort, effort)
         self.limiter = RateLimiter(rpm or self.preset.rpm, tpm or self.preset.tpm)
         self.max_tokens = max_tokens
@@ -202,20 +249,37 @@ class OpenAICompatClient(LLMClient):
             kwargs["tools"] = tools
         if self.preset.reasoning_effort and self.effort in {"low", "medium", "high"}:
             kwargs["reasoning_effort"] = self.effort
-        entry = await self.limiter.acquire(_estimate_tokens(messages, tools), self.on_wait)
-        try:
-            resp = await self.client.chat.completions.create(**kwargs)
-        except self._openai.RateLimitError as e:
-            raise LLMError(f"{self.provider} rate limit / free-tier quota exhausted even after retries: {e}. "
-                           f"Wait (daily quotas reset every 24 h), lower LLM_RPM, or switch model/provider.") from e
-        except self._openai.AuthenticationError as e:
-            raise LLMError(f"{self.provider} rejected the API key ({self.preset.key_env}): {e}") from e
-        except self._openai.BadRequestError as e:
-            raise LLMError(f"{self.provider} rejected the request: {e}") from e
-        except self._openai.APIConnectionError as e:
-            raise LLMError(f"Could not reach {self.provider} at {self.client.base_url}: {e}") from e
-        except self._openai.APIStatusError as e:
-            raise LLMError(f"{self.provider} API error {e.status_code}: {e}") from e
+        est = _estimate_tokens(messages, tools)
+        for attempt in range(self.rate_retries + 1):
+            entry = await self.limiter.acquire(est, self.on_wait)
+            try:
+                resp = await self.client.chat.completions.create(**kwargs)
+                break
+            except self._openai.RateLimitError as e:
+                q = parse_quota_error(e.body, str(e))
+                if q.daily:
+                    raise LLMError(
+                        f"{self.provider}: the daily free-tier quota for {self.model} is used up ({q.metric}"
+                        f"{f', limit {q.limit}' if q.limit else ''}). Daily quotas reset after 24 h (Gemini: "
+                        f"midnight Pacific time). Each model has its own quota, so you can set LLM_MODEL to "
+                        f"another model meanwhile.") from e
+                if attempt == self.rate_retries:
+                    raise LLMError(f"{self.provider} rate limit still exceeded after {attempt} waits: {e}. "
+                                   f"Lower LLM_RPM or switch model/provider.") from e
+                if q.limit and re.search(r"request", q.metric, re.I) and re.search(r"minute", q.metric, re.I):
+                    self.limiter.rpm = min(self.limiter.rpm or q.limit, q.limit)   # learn the real limit
+                wait = q.retry_after if q.retry_after is not None else 30.0
+                if self.on_wait:
+                    self.on_wait(wait)
+                await asyncio.sleep(wait + 1)
+            except self._openai.AuthenticationError as e:
+                raise LLMError(f"{self.provider} rejected the API key ({self.preset.key_env}): {e}") from e
+            except self._openai.BadRequestError as e:
+                raise LLMError(f"{self.provider} rejected the request: {e}") from e
+            except self._openai.APIConnectionError as e:
+                raise LLMError(f"Could not reach {self.provider} at {self.client.base_url}: {e}") from e
+            except self._openai.APIStatusError as e:
+                raise LLMError(f"{self.provider} API error {e.status_code}: {e}") from e
         usage = self._account(resp)
         RateLimiter.record(entry, usage.input_tokens + usage.output_tokens)
         if not resp.choices:

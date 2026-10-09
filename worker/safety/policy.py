@@ -153,36 +153,36 @@ class Guard:
         if ctx.read_only and action.kind in writes and not action.is_login:
             self._block(ctx, action, "the verifier runs in read-only mode and may not change anything")
 
-        # 2. Approval rules ----------------------------------------------------
-        for rule in self.policy.rules:
-            if action.kind == "form_submit" and action.is_login:
-                break
-            why = rule.matches(action)
-            if not why:
-                continue
-            fp = action.fingerprint(rule.id)
-            if fp in self._approved:
-                continue
-            req = HumanRequest(
-                kind="approval",
-                question=f"{action.description}",
-                details={"policy": rule.description, "reason": why,
-                         **({"target": action.url} if action.url else {}),
-                         **{f"field:{k}": v for k, v in _flatten(action.fields) if v not in ("", None)}},
-            )
-            ctx.events.emit("human_request", step=ctx.step, request=req.to_dict())
-            resp = await ctx.human.request(req, ctx.settings.human_timeout_s)
-            ctx.events.emit("human_response", step=ctx.step, request_id=req.id, response=resp.to_dict())
+        # 2. Approval rules: one question per action, listing every rule it triggers
+        if action.kind == "form_submit" and action.is_login:
+            return
+        triggered = [(rule, why, action.fingerprint(rule.id)) for rule in self.policy.rules
+                     if (why := rule.matches(action))]
+        triggered = [t for t in triggered if t[2] not in self._approved]
+        if not triggered:
+            return
+        policy_text = " ".join(rule.description for rule, _, _ in triggered)
+        req = HumanRequest(
+            kind="approval",
+            question=f"{action.description}",
+            details={"policy": policy_text, "reason": "; ".join(why for _, why, _ in triggered),
+                     **({"target": action.url} if action.url else {}),
+                     **{f"field:{k}": v for k, v in _flatten(action.fields) if v not in ("", None)}},
+        )
+        ctx.events.emit("human_request", step=ctx.step, request=req.to_dict())
+        resp = await ctx.human.request(req, ctx.settings.human_timeout_s)
+        ctx.events.emit("human_response", step=ctx.step, request_id=req.id, response=resp.to_dict())
+        for rule, why, _ in triggered:
             self.decisions.append({"rule": rule.id, "action": action.description, "reason": why,
                                    "approved": bool(resp.approved), "comment": resp.answer,
                                    "timed_out": resp.timed_out})
-            if not resp.approved:
-                msg = ("No response from the user within the time limit, so the action was NOT performed."
-                       if resp.timed_out else
-                       f"The user REJECTED this action ({rule.description}). It was NOT performed."
-                       + (f" User comment: {resp.answer}" if resp.answer else ""))
-                raise ToolError(ErrorKind.REJECTED_BY_USER, msg)
-            self._approved.add(fp)
+        if not resp.approved:
+            msg = ("No response from the user within the time limit, so the action was NOT performed."
+                   if resp.timed_out else
+                   f"The user REJECTED this action ({policy_text}). It was NOT performed."
+                   + (f" User comment: {resp.answer}" if resp.answer else ""))
+            raise ToolError(ErrorKind.REJECTED_BY_USER, msg)
+        self._approved.update(fp for _, _, fp in triggered)
 
     def _block(self, ctx: "RunContext", action: ProposedAction, reason: str) -> None:
         ctx.events.emit("policy_block", step=ctx.step, action=action.description, reason=reason)

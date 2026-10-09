@@ -101,7 +101,9 @@ while True:
 
 ## 4. `worker/core/verifier.py`
 * `rule_check()` is a deterministic, free check: a data-changing task with zero recorded writes fails.
-* `verify()` builds the auditor kickoff (task, criteria, claim, facts, actions), starts a **new**
+* `user_decisions()` lists what the user decided, as recorded by the system rather than claimed by the worker:
+  approval-gate decisions (`guard.decisions`) and answers to `ask_user` questions (from the event history).
+* `verify()` builds the auditor kickoff (task, criteria, claim, facts, actions, user decisions), starts a **new**
   conversation with `verifier_registry()` (no `finish`/`ask_user`/`file_write`/`remember`), sets
   `ctx.read_only = True` (the Guard then blocks all writes except logins), runs a `ToolLoop` until
   `submit_verdict`, and forces `passed=False` if any criterion is unmet.
@@ -152,8 +154,8 @@ while True:
 * `ProposedAction(kind, description, url, method, fields, text, is_login)` with `fingerprint(rule_id)`.
 * `Rule.matches()`: numeric threshold on fields whose *name* matches a regex (tolerates `"$18,250.00"`),
   regex on the visible text, or method match.
-* `Guard.authorize()`: (1) URL allow-list / blocked paths, (2) read-only mode, (3) approval rules →
-  `HumanRequest(kind="approval", details=all fields)` → approved: remember the fingerprint; rejected or
+* `Guard.authorize()`: (1) URL allow-list / blocked paths, (2) read-only mode, (3) approval rules → one
+  `HumanRequest(kind="approval", details=all fields)` per action, listing every rule it triggers → approved: remember the fingerprints; rejected or
   timeout: raise `ToolError(REJECTED_BY_USER)`. Every decision is kept in `guard.decisions` for the report.
 * `SecretVault.resolve()` / `redact()` (and the `_obj` variants for dicts/lists).
 
@@ -167,9 +169,11 @@ while True:
 * `sanitize_schema` / `to_openai_tool`: drop `additionalProperties`, omit `parameters` for no-arg tools,
   and turn free-form objects (HTTP headers, JSON bodies, CSV rows) into JSON-encoded strings. The
   executor's `validate_args` decodes them back (`_decode_json`).
-* `OpenAICompatClient.chat()`: rate limit → `chat.completions.create` (SDK retries 429/5xx with
-  backoff) → map errors to clear `LLMError`s (missing key with the sign-up URL, exhausted quota,
-  rejected request, unreachable server).
+* `OpenAICompatClient.chat()`: rate limit → `chat.completions.create` (the SDK retries 5xx briefly) →
+  on a 429, `parse_quota_error` reads which quota was hit: a per-minute limit is waited out for the
+  provider's `retryDelay` (up to `rate_retries` times) and the limiter adopts the reported limit; a
+  per-day quota raises at once → other errors become clear `LLMError`s (missing key with the sign-up
+  URL, rejected request, unreachable server).
 * `structured()`: asks for a single JSON object matching the pydantic schema, extracts it
   (`extract_json` tolerates code fences and prose), validates it, and on failure sends the validation error back once for a repair.
 * `_CompatConversation.send()`: appends tool results as `role: tool` messages, then notes and user text as one

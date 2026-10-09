@@ -15,7 +15,8 @@ import pytest
 
 from worker.core.task_spec import TaskSpec
 from worker.llm.base import LLMError, ToolOutcome
-from worker.llm.openai_compat import OpenAICompatClient, RateLimiter, extract_json, sanitize_schema, to_openai_tool
+from worker.llm.openai_compat import (OpenAICompatClient, RateLimiter, extract_json, parse_quota_error,
+                                      sanitize_schema, to_openai_tool)
 from worker.runtime.executor import validate_args
 from worker.tools.files import FileWrite
 from worker.tools.http_api import HttpRequest
@@ -115,10 +116,55 @@ async def test_missing_key_and_quota_errors_are_clear(monkeypatch):
     with pytest.raises(LLMError, match="GEMINI_API_KEY"):
         await llm.conversation("S", []).send(user_text="x")
 
-    err = {"error": {"code": 429, "message": "Resource has been exhausted (e.g. check quota).", "status": "RESOURCE_EXHAUSTED"}}
-    llm = make_client(MockAPI([(429, err)]), monkeypatch)
-    with pytest.raises(LLMError, match="quota"):
+    llm = make_client(MockAPI([(429, _quota_429("GenerateRequestsPerDayPerProjectPerModel-FreeTier", 20))]),
+                      monkeypatch)
+    with pytest.raises(LLMError, match="daily free-tier quota.*limit 20"):
         await llm.conversation("S", []).send(user_text="x")
+
+
+def _quota_429(quota_id: str, value: int, delay: str = "32s") -> list:
+    """A free-tier 429 body exactly as Gemini's OpenAI-compatible endpoint returns it (a JSON list)."""
+    return [{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED",
+                       "message": f"You exceeded your current quota. Please retry in {delay[:-1]}.65s.",
+                       "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                                    "violations": [{"quotaId": quota_id, "quotaValue": str(value)}]},
+                                   {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": delay}]}}]
+
+
+@pytest.mark.asyncio
+async def test_per_minute_429_waits_the_requested_delay_and_learns_the_limit(monkeypatch):
+    slept: list[float] = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    monkeypatch.setattr("worker.llm.openai_compat.asyncio.sleep", fake_sleep)
+    api = MockAPI([(429, _quota_429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", 3)), (200, TURN_2)])
+    llm = make_client(api, monkeypatch, rpm=10)
+    waits: list[float] = []
+    llm.on_wait = waits.append
+    turn = await llm.conversation("S", []).send(user_text="x")
+    assert turn.tool_calls[0].name == "finish" and len(api.requests) == 2
+    assert waits == [32.0] and slept[-1] >= 32          # the provider's RetryInfo delay, surfaced to the UI
+    assert llm.limiter.rpm == 3                          # adopted the real per-minute limit
+
+    # a limit that never clears ends with a clear error after a bounded number of waits
+    api = MockAPI([(429, _quota_429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", 3))] * 3)
+    llm = make_client(api, monkeypatch)
+    llm.rate_retries = 2
+    with pytest.raises(LLMError, match="after 2 waits"):
+        await llm.conversation("S", []).send(user_text="x")
+    assert len(api.requests) == 3
+
+
+def test_parse_quota_error_for_other_provider_formats():
+    q = parse_quota_error({"error": {"message": "Rate limit reached for model on tokens per day (TPD). "
+                                                "Please try again in 7m12.5s."}})
+    assert q.daily and q.limit is None
+    q = parse_quota_error({"message": "Too many requests. Please retry in 4.5s"})
+    assert not q.daily and q.retry_after == 4.5
+    q = parse_quota_error(None, "429 Too Many Requests")
+    assert not q.daily and q.retry_after is None
 
 
 def test_unknown_provider_and_missing_model():

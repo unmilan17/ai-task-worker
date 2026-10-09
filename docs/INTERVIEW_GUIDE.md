@@ -143,7 +143,8 @@ suite runs the real model and scores outcomes deterministically.
 **Q: What does it cost?**
 Nothing on the default setup: it runs on Gemini's free tier. Every run reports LLM calls and tokens. The real
 constraint is free-tier **rate limits**, so the adapter has a sliding-window limiter (requests and tokens per
-minute), shows waits in the UI, and the SDK retries 429s. Levers to use fewer calls and tokens: compact snapshots,
+minute), shows waits in the UI, waits out per-minute 429s for the provider's retry delay, and stops clearly
+when a daily quota is used up. Levers to use fewer calls and tokens: compact snapshots,
 actions that return the new state (fewer turns), auto-retries that don't spend model calls, and effort level.
 
 **Q: Why Gemini and not, say, Groq or a local model?**
@@ -192,12 +193,14 @@ label in the snapshot (improve `labelOf` in `dom_snapshot.js`).
 | Add an eval task | `evals/tasks.yaml` + `evals/checks.py` | write the task in plain English, add a deterministic check function. |
 | Make retries more aggressive | `.env` `MAX_TOOL_RETRIES`, `executor.py` backoff | explain why writes still must not auto-retry. |
 | Make the verifier stricter | `prompts.VERIFIER_SYSTEM` / `verifier.rule_check` | e.g. a rule: every fact used in the summary must have a source. |
-| Switch provider/model | `.env` `LLM_PROVIDER=groq` (+ `GROQ_API_KEY`) or `LLM_MODEL=gemini-3.5-flash-lite` | re-run evals and compare pass rate, steps and time. |
+| Switch provider/model | `.env` `LLM_PROVIDER=groq` (+ `GROQ_API_KEY`) or `LLM_MODEL=gemini-3.8-flash` | re-run evals and compare pass rate, steps and time. |
 | Make the agent gentler on a free quota | `.env` `LLM_RPM=4` | explain the sliding-window limiter in `openai_compat.py`. |
 | Add a new error kind (e.g. RATE_LIMITED) | `tools/base.py` (`ErrorKind`, `DEFAULT_HINTS`), `http_api.py` (map 429), `executor.py` (retry with longer delay) | |
 
 ## 6. Numbers to know
-* About 5.5k lines of Python. 42 automated tests (no API key needed). 8 eval scenarios.
-* Budgets: 60 tool steps, 20 minutes, USD 5 per run. Up to 2 auto-retries. Up to 2 verification-fix rounds.
+* About 5.5k lines of Python. 46 automated tests (no API key needed). 8 eval scenarios.
+* Budgets: 60 tool steps, 30 minutes, USD 5 per run. Up to 2 auto-retries. Up to 2 verification-fix rounds.
 * Approval threshold: 10,000.00. Snapshot cap: 9,000 characters.
-* See `docs/EVALUATION.md` for pass rate, steps, time and cost per task.
+* Live eval (Gemini free tier, `gemini-3.5-flash-lite`, one run each): 7 of 8 scenarios pass; about 30-45 LLM
+  requests and 2.5-3.5 minutes per task. Free quota: Flash-Lite 500 requests/day (one full eval run); `gemini-3.8-flash` 5 requests/minute and 20/day.
+* See `docs/EVALUATION.md` for steps, time and cost per task.

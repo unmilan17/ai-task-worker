@@ -173,21 +173,25 @@ roadmap has server-side context editing/compaction.
 
 ---
 
-### D12. Model choice: a free tier by default (Gemini Flash), paid models optional
-**Choice:** Google Gemini's free tier (`gemini-3.8-flash`) through its OpenAI-compatible endpoint, with
+### D12. Model choice: a free tier by default (Gemini Flash-Lite), paid models optional
+**Choice:** Google Gemini's free tier (`gemini-3.5-flash-lite`) through its OpenAI-compatible endpoint, with
 `reasoning_effort=medium` and a client-side rate limiter. Groq, OpenRouter, Ollama, OpenAI and Anthropic Claude are
 one `.env` line away.
 
 **Alternatives:** paid frontier models only; local models only; Groq's free tier as the default.
 
-**Why free Gemini Flash:** no credit card, strong native tool calling, a long context window and vision. Groq's free
+**Why free Gemini Flash-Lite:** no credit card, native tool calling, a long context window and vision. The larger
+`gemini-3.8-flash` was the first choice, but its free tier allowed only 5 requests per minute and 20 per day when
+tested (2026-10), while one task needs about 30-45 requests. Flash-Lite allowed 500 requests per day: about a dozen
+tasks, or one full eval run. Groq's free
 tier is faster but its tokens-per-minute cap is smaller than a single agent request late in a run. Local models
 need a strong GPU and are weaker at long multi-step tool use. The agent does not depend on the model: quality
 and cost are a configuration choice, measured with the eval suite.
 
 **Rate limits are a first-class concern:** an agent sends many large requests in a row, which is exactly what
 free tiers throttle. So the adapter throttles itself (sliding window on requests and tokens per minute), shows
-the wait in the UI, and the SDK retries any 429 with backoff. The loop never forces `tool_choice`, which some
+the wait in the UI, and reads any 429 that still happens: a per-minute limit is waited out for the delay the
+provider asks for (and the limiter adopts the reported limit); an exhausted daily quota ends the run with a clear message. The loop never forces `tool_choice`, which some
 providers don't support. It nudges the model if it replies without a tool call.
 
 ---

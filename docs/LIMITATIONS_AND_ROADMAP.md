@@ -19,15 +19,16 @@
   long tasks (hundreds of steps) would need server-side context editing or compaction (not enabled).
 * Tool calls run sequentially within a run, and there is one browser tab per run. No parallel sub-agents.
 * The understand step can only ask questions *before* acting if the ambiguity is visible in the request.
-  Ambiguity discovered in the data (e.g. two Initech invoices) relies on the model choosing to `ask_user`.
+  Ambiguity discovered in the data (e.g. two Initech invoices) relies on the model choosing to `ask_user`,
+  which Flash-Lite did not do in the live eval.
 
 **Reliability**
 * No checkpoint/resume: if the process dies mid-run, the run is lost (the trace remains).
 * Error classification for browser actions relies on HTTP status codes and Playwright exceptions. A
   web app that returns "200 OK" with an error message in the page is only detected by the model reading the page.
 * Budgets are estimates (cost uses list prices and token counts reported by the API; free tiers report $0).
-* Free tiers are rate limited per minute and per day. Runs are slower, and a full repeated eval may need
-  more than one day of quota. Free-tier model names and limits change, so check the provider console.
+* Free tiers are rate limited per minute and per day. Runs are slower, and a full repeated eval needs
+  more than one day of quota (Flash-Lite: 500 requests/day, one eval run uses about 320). Free-tier model names and limits change, so check the provider console.
 
 **Safety**
 * Approval rules match on field *names* (`amount`, `total`) and button text. A system with unusual field
@@ -36,9 +37,12 @@
 * The dashboard has no authentication. It is meant to run locally.
 
 **Providers**
-* Both LLM adapters are verified offline against mock API endpoints (request shape, history handling,
-  error mapping). Provider-specific behaviour (e.g. how strictly Gemini validates thought signatures, schema
-  quirks) can only be confirmed with live runs. Live eval results are recorded in EVALUATION.md.
+* Both LLM adapters have offline contract tests against mock API endpoints. Only the Gemini path
+  (OpenAI-compatible adapter) has been run live (see EVALUATION.md); Groq, OpenRouter, Ollama and Anthropic are
+  covered by the offline tests only.
+* The default free model, `gemini-3.5-flash-lite`, passed 7 of 8 eval scenarios but did not ask when two
+  records matched equally well (it picked one silently). Larger Gemini models have free quotas too small for
+  agent runs (`gemini-3.8-flash`: 20 requests/day).
 
 ## Assumptions
 

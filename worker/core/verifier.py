@@ -33,6 +33,21 @@ from .task_spec import TaskSpec
 VERIFIER_MAX_STEPS = 25
 
 
+def user_decisions(ctx: RunContext) -> str:
+    """What the user decided during the run, as recorded by the system (not as claimed by the worker):
+    approval-gate decisions and answers to the worker's questions."""
+    lines = [f"- Approval gate: {d['action']} ({d['reason']}) -> "
+             f"{'APPROVED' if d['approved'] else 'NOT approved'} by the user" for d in ctx.guard.decisions]
+    questions: dict[str, str] = {}
+    for e in ctx.events.history:
+        if e.type == "human_request" and e.data["request"].get("kind") != "approval":
+            questions[e.data["request"]["id"]] = e.data["request"]["question"]
+        elif e.type == "human_response" and e.data["request_id"] in questions:
+            answer = e.data["response"].get("answer") or "(no answer)"
+            lines.append(f"- Worker asked: {questions[e.data['request_id']]} -> user answered: {answer}")
+    return "\n".join(lines) or "(none)"
+
+
 def rule_check(spec: TaskSpec, claim: dict[str, Any], ctx: RunContext) -> dict[str, Any] | None:
     """Cheap deterministic checks. Returns a failed verdict, or None if nothing is wrong."""
     if spec.changes_data and not ctx.actions:
@@ -58,7 +73,8 @@ async def verify(llm: LLMClient, ctx: RunContext, budget: Budget, task: str, spe
     kickoff = fill(VERIFIER_KICKOFF, task=task,
                    criteria="\n".join(f"{i + 1}. {c}" for i, c in enumerate(spec.success_criteria)),
                    status=claim.get("status"), summary=claim.get("summary"), evidence=evidence,
-                   facts=ctx.memory.render(), actions=ctx.vault.redact(actions))
+                   facts=ctx.memory.render(), actions=ctx.vault.redact(actions),
+                   decisions=ctx.vault.redact(user_decisions(ctx)))
 
     registry = verifier_registry()
     conv = llm.conversation(fill(VERIFIER_SYSTEM, environment=environment), registry.specs(), purpose="verifier")

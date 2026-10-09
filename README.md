@@ -50,7 +50,7 @@ systems, and returns a summary with evidence: facts with provenance, screenshots
 | Concise summary + evidence | `report.html` / `report.json`: status, verification table, facts with sources, changes made, approvals, reliability stats, screenshots, session video, full JSONL trace. | `worker/core/report.py` |
 
 Plus: credentials never reach the model (secret placeholders + redaction), prompt-injection resistance,
-a live web dashboard and a CLI, fault injection (`CHAOS=mild|hard`), an eval harness, and 42 automated tests.
+a live web dashboard and a CLI, fault injection (`CHAOS=mild|hard`), an eval harness, and 46 automated tests.
 It runs on **free-tier LLM APIs** (Google Gemini by default), with built-in rate limiting for free quotas.
 
 ## 2. Quick start
@@ -111,15 +111,16 @@ Switch with two lines in `.env`:
 
 | `LLM_PROVIDER` | Key variable (where to get it) | Default model | Notes |
 |---|---|---|---|
-| `gemini` **(default, recommended)** | `GEMINI_API_KEY` ([AI Studio](https://aistudio.google.com/apikey), free, no card) | `gemini-3.8-flash` | Strong tool calling, long context, vision. Free quota is per model; if one is used up, set `LLM_MODEL=gemini-3.5-flash-lite`. Free-tier prompts may be used by Google to improve products (fine here: all data is fake). |
+| `gemini` **(default, recommended)** | `GEMINI_API_KEY` ([AI Studio](https://aistudio.google.com/apikey), free, no card) | `gemini-3.5-flash-lite` | Tool calling, long context, vision. Free quota is per model and per day: in our tests `gemini-3.8-flash` allowed only 20 requests/day (one task needs about 30-45), Flash-Lite 500/day, so Flash-Lite is the default. Free-tier prompts may be used by Google to improve products (fine here: all data is fake). |
 | `groq` | `GROQ_API_KEY` ([console](https://console.groq.com/keys), free) | `openai/gpt-oss-120b` | Very fast, but small tokens-per-minute limits on the free tier, so long agent runs are throttled. |
 | `openrouter` | `OPENROUTER_API_KEY` ([openrouter.ai](https://openrouter.ai/keys)) | set `LLM_MODEL` to a `:free` model | Low daily request caps on free accounts. |
 | `ollama` | none | `qwen3:14b` | Fully local and unlimited, but needs a capable GPU. Small models are weaker at long multi-step tool use. |
 | `openai` / `anthropic` | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `gpt-5-mini` / `claude-opus-5-5` | Paid. |
 
 Free tiers limit requests and tokens per minute. The adapter spaces requests to stay under them
-(`LLM_RPM` / `LLM_TPM` override the presets), shows "waiting for rate limit" in the UI, and retries 429s
-with backoff. Model names and quotas change over time, so check your provider's console.
+(`LLM_RPM` / `LLM_TPM` override the presets), shows "waiting for rate limit" in the UI, waits out a
+per-minute 429 for the delay the provider asks for (and adopts the limit it reports), and stops with a clear
+message when a daily quota is used up. Model names and quotas change over time, so check your provider's console.
 
 ## 4. How it works
 
@@ -196,14 +197,15 @@ Summary below. Each one is explained with the alternatives in **[docs/DESIGN_DEC
 
 ## 6. Evaluation & tests
 
-* **42 automated tests** (`pytest -q`, no API key): the real loop, browser, tools, guardrails and sandbox
+* **46 automated tests** (`pytest -q`, no API key): the real loop, browser, tools, guardrails and sandbox
   driven by a scripted LLM (approval rejection respected, failed submits never auto-retried, fake "done"
   claims rejected, secrets never in traces...), unit tests for the safety/runtime pieces, sandbox
   behaviour, and offline contract tests of both LLM adapters (mock API endpoints) and the free-tier rate limiter.
 * **8-scenario eval suite** (`python -m worker eval --repeat 3`) with the live model and
   **deterministic outcome checks on the real ERP database / files**: headline task, mild chaos, hard
   chaos (API fallback), approval rejected, approval granted, ambiguity, inbox triage with
-  duplicate + phishing email, and a read-only CSV report.
+  duplicate + phishing email, and a read-only CSV report. Live result on the Gemini free tier
+  (`gemini-3.5-flash-lite`, one run each): **7 of 8 scenarios pass**.
 
 Details and results: **[docs/EVALUATION.md](docs/EVALUATION.md)**.
 
@@ -211,7 +213,7 @@ Details and results: **[docs/EVALUATION.md](docs/EVALUATION.md)**.
 
 | Component | Used for |
 |---|---|
-| **Google Gemini API, free tier** (default), model `gemini-3.8-flash` via its OpenAI-compatible endpoint | reasoning, tool calling, JSON task spec |
+| **Google Gemini API, free tier** (default), model `gemini-3.5-flash-lite` via its OpenAI-compatible endpoint | reasoning, tool calling, JSON task spec |
 | OpenAI Python SDK (`openai`) | client for every OpenAI-compatible provider: Gemini, Groq, OpenRouter, Ollama, OpenAI |
 | Optional: Groq / OpenRouter free tiers, local models via Ollama, Anthropic Claude API (paid, `anthropic` SDK) | alternative providers, one line in `.env` |
 | **Playwright** (Chromium) | real browser automation, screenshots, video recording |
@@ -243,7 +245,7 @@ AI coding assistants were used during development, as the brief permits.
 * No checkpoint/resume if the process dies mid-run. The dashboard has no authentication (local use).
 * Approval rules match field names/button text and need tuning for systems with unusual naming.
 * Free tiers have per-minute and per-day quotas, so runs are slower and a full eval may need more than one day of quota.
-* The LLM adapters are verified offline against mock API endpoints. Live results depend on your provider and model (see [EVALUATION.md](docs/EVALUATION.md)).
+* Live-tested on Gemini (`gemini-3.5-flash-lite`): 7 of 8 eval scenarios pass; the miss is that it does not ask when two records match equally well. Other providers are covered by offline tests only (see [EVALUATION.md](docs/EVALUATION.md)).
 
 More: **[docs/LIMITATIONS_AND_ROADMAP.md](docs/LIMITATIONS_AND_ROADMAP.md)**.
 
