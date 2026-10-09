@@ -25,7 +25,9 @@
 * No checkpoint/resume: if the process dies mid-run, the run is lost (the trace remains).
 * Error classification for browser actions relies on HTTP status codes and Playwright exceptions. A
   web app that returns "200 OK" with an error message in the page is only detected by the model reading the page.
-* Budgets are estimates (cost uses list prices and token counts reported by the API).
+* Budgets are estimates (cost uses list prices and token counts reported by the API; free tiers report $0).
+* Free tiers are rate limited per minute and per day. Runs are slower, and a full repeated eval may need
+  more than one day of quota. Free-tier model names and limits change, so check the provider console.
 
 **Safety**
 * Approval rules match on field *names* (`amount`, `total`) and button text. A system with unusual field
@@ -34,8 +36,9 @@
 * The dashboard has no authentication. It is meant to run locally.
 
 **Providers**
-* The OpenAI adapter is included to show provider independence but was **not tested against the live
-  OpenAI API**. The demo and evals use Claude.
+* Both LLM adapters are verified offline against mock API endpoints (request shape, history handling,
+  error mapping). Provider-specific behaviour (e.g. how strictly Gemini validates thought signatures, schema
+  quirks) can only be confirmed with live runs. Live eval results are recorded in EVALUATION.md.
 
 ## Assumptions
 

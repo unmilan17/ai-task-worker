@@ -33,7 +33,7 @@ flowchart LR
       T --> F[Files - workspace/]
       T --> HTTP[HTTP / REST API]
       T --> M[Memory + plan]
-      LLM[(LLM<br/>Claude via llm/)] <--> TS
+      LLM[(LLM via llm/<br/>Gemini free tier by default)] <--> TS
       LLM <--> L
       LLM <--> V
     end
@@ -95,7 +95,7 @@ sequenceDiagram
     autonumber
     participant U as User
     participant A as Agent
-    participant LLM as Claude
+    participant LLM as LLM (Gemini)
     participant X as Executor + Guard
     participant SH as SupplierHub
     participant ERP as ERP
@@ -148,7 +148,13 @@ A provider-agnostic interface with two operations:
   tool-using chat. Each provider keeps its **native transcript and only appends to it**.
 * `structured(system, prompt, Schema) → Schema`, a one-shot call returning a validated pydantic object.
 
-Implementations: `AnthropicClient` (default), `OpenAIClient` (adapter), `ScriptedLLM` (deterministic fake for tests).
+Implementations:
+* `OpenAICompatClient` (`openai_compat.py`, default): one adapter for every OpenAI-compatible API, with presets for
+  **Gemini (free tier, default)**, Groq, OpenRouter, Ollama and OpenAI. It includes a sliding-window rate limiter
+  (requests/min and tokens/min) for free quotas, tool-schema sanitising for strict providers, JSON-mode structured
+  output with one repair attempt, and preservation of provider extras on tool calls (e.g. Gemini thought signatures).
+* `AnthropicClient` (`anthropic_client.py`): Claude (paid), with adaptive thinking and prompt caching.
+* `ScriptedLLM` (`fake.py`): a deterministic fake for tests.
 
 ### 4.2 Tools: `worker/tools/`
 Every capability is a `Tool` with a name, description, JSON schema, `is_idempotent(args)` and
@@ -226,7 +232,7 @@ sandbox/state/
 
 | File | Purpose | Changes when... |
 |---|---|---|
-| `.env` | model, effort, budgets, browser flags, API key | you tune cost/behaviour |
+| `.env` | provider, model, effort, rate limits, budgets, browser flags, API key | you switch provider or tune behaviour |
 | `config/environment.yaml` | the "onboarding doc": systems, URLs, sign-in placeholders, company rules | you point the worker at a different company/system set |
 | `config/policy.yaml` | hard guardrails: allowed hosts, approval rules | your risk appetite changes |
 | `sandbox/test_credentials.json` | fake test credentials read by the vault | never in production (use a real secret store) |

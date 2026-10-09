@@ -18,8 +18,8 @@ ai-task-worker/
 │   │   └── prompts.py         every prompt in one place
 │   ├── llm/                   model providers behind one interface
 │   │   ├── base.py            LLMClient / Conversation / ToolCall / Usage / prices
-│   │   ├── anthropic_client.py  Claude (default)
-│   │   ├── openai_client.py   OpenAI adapter
+│   │   ├── openai_compat.py   ★ Gemini (free, default) / Groq / OpenRouter / Ollama / OpenAI
+│   │   ├── anthropic_client.py  Claude (optional, paid)
 │   │   └── fake.py            ScriptedLLM for tests
 │   ├── tools/                 the agent's capabilities
 │   │   ├── base.py            ★ Tool, ToolResult, ErrorKind (+ recovery hints)
@@ -157,7 +157,27 @@ while True:
   timeout: raise `ToolError(REJECTED_BY_USER)`. Every decision is kept in `guard.decisions` for the report.
 * `SecretVault.resolve()` / `redact()` (and the `_obj` variants for dicts/lists).
 
-## 10. `worker/llm/anthropic_client.py`
+## 10. `worker/llm/openai_compat.py` (default adapter)
+* `PRESETS`: per provider, the base URL, API-key variable, default requests/min and tokens/min,
+  and capability flags (`reasoning_effort`, `vision`). Gemini's preset points at Google's
+  OpenAI-compatible endpoint.
+* `RateLimiter`: a sliding 60-second window. `acquire(estimated_tokens)` sleeps until one more request
+  fits under both the RPM and TPM limits (and reports the wait through `on_wait`, which the Agent turns
+  into a `rate_limit_wait` event). `record()` replaces the estimate with the real token usage.
+* `sanitize_schema` / `to_openai_tool`: drop `additionalProperties`, omit `parameters` for no-arg tools,
+  and turn free-form objects (HTTP headers, JSON bodies, CSV rows) into JSON-encoded strings. The
+  executor's `validate_args` decodes them back (`_decode_json`).
+* `OpenAICompatClient.chat()`: rate limit → `chat.completions.create` (SDK retries 429/5xx with
+  backoff) → map errors to clear `LLMError`s (missing key with the sign-up URL, exhausted quota,
+  rejected request, unreachable server).
+* `structured()`: asks for a single JSON object matching the pydantic schema, extracts it
+  (`extract_json` tolerates code fences and prose), validates it, and on failure sends the validation error back once for a repair.
+* `_CompatConversation.send()`: appends tool results as `role: tool` messages, then notes and user text as one
+  user message (images only if the provider has vision). It stores the assistant turn **append-only and
+  with provider extras on tool calls kept** (Gemini returns "thought signatures" there, and they must be
+  echoed back on the next request), and invents ids when a provider omits them.
+
+## 10b. `worker/llm/anthropic_client.py` (optional, paid)
 * `AnthropicClient.create()` wraps `messages.create` and adds the refusal-fallback beta (auto-disabled
   if the API rejects it), mapping SDK errors to `LLMError`. The SDK itself retries 429/5xx (`max_retries=4`).
 * `_AnthropicConversation.send()` builds one user message: `tool_result` blocks (text + optional
@@ -193,7 +213,7 @@ while True:
 | 1 | `cli.cmd_run` | builds `Settings`, makes sure the sandbox runs, `make_llm()`, `Agent(..., CLIHumanChannel, on_event=print_event)` |
 | 2 | `Agent.run` → `task_spec.understand` | structured call → `TaskSpec(goal=..., success_criteria=[...], changes_data=True, plan=[...])` |
 | 3 | `Agent.run` | creates the executor conversation and `ToolLoop`, sends the kickoff |
-| 4 | `ToolLoop._run` → `conv.send` | Claude replies with `update_plan` + `browser_navigate(http://localhost:8001/login)` |
+| 4 | `ToolLoop._run` → `conv.send` | The model replies with `update_plan` + `browser_navigate(http://localhost:8001/login)` |
 | 5 | `ToolExecutor.execute` → `BrowserNavigate.run` | `Guard.authorize(navigate)` → host allowed → `page.goto` → `_observe` → snapshot text with `[1:input "Username"] [2:input type=password ...] [3:button "Sign in"]` |
 | 6 | next turn | `browser_type(1, "{{secret:supplierhub.username}}")`, `browser_type(2, "{{secret:supplierhub.password}}", submit=true)` → vault substitutes → Guard sees a *login* form → allowed → redirected to `/invoices` |
 | 7 | several turns | the model filters to ACME, notices the sort order, skips the credit note, opens `INV-ACME-1102`, reads total and due date |

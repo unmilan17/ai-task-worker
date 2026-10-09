@@ -4,12 +4,12 @@ How the worker is tested and measured. There are two complementary layers:
 
 | Layer | What it proves | Needs API key? | Command |
 |---|---|---|---|
-| **Automated tests** (`tests/`) | The machinery is correct: tools, browser, policy, retries, approvals, verification flow, loop detection, secret redaction, sandbox behaviour, Claude adapter request/response contract. | No | `pytest` |
+| **Automated tests** (`tests/`) | The machinery is correct: tools, browser, policy, retries, approvals, verification flow, loop detection, secret redaction, sandbox behaviour, request/response contracts of both LLM adapters, the free-tier rate limiter. | No | `pytest` |
 | **Eval suite** (`evals/`) | The *real model* actually completes realistic tasks, measured by deterministic outcome checks on the real end state. | Yes | `python -m worker eval --repeat 3` |
 
 ---
 
-## 1. Automated tests (34 tests, all passing)
+## 1. Automated tests (42 tests, all passing)
 
 ```bash
 pytest -q        # ≈ 1–2 minutes; starts the sandbox in-process and drives a real headless browser
@@ -20,6 +20,7 @@ pytest -q        # ≈ 1–2 minutes; starts the sandbox in-process and drives a
 | `tests/test_agent_loop.py` | 8 | The **real** loop + tools + browser + policy + sandbox, with a `ScriptedLLM` making the decisions: happy path (bill created, facts recorded, **no secret in trace/report**); high-value write → approval → **rejection respected** (nothing written); approval granted → written; **failed form submit not auto-retried** under chaos (exactly one bill); a fake "completed" claim **rejected by the rule check** and then fixed; policy blocks external host + admin endpoint; loop detector injects a reflection; out-of-scope request refused with zero actions. |
 | `tests/test_units.py` | 17 | Vault resolve/redact; URL allow-list; approval rules (`$18,250.00` parsed, threshold boundary, non-amount fields ignored, destructive verbs, DELETE); approval fingerprints; argument validation/coercion; loop detector; workspace path traversal; error rendering; scripted human. |
 | `tests/test_sandbox.py` | 4 | The traps really exist (credit note newest, same-day Initech invoices, last-updated sort); ERP validation (amount format, date format, duplicates, auth); hard chaos breaks the form but not the API. |
+| `tests/test_openai_compat_adapter.py` | 8 | Offline contract test of the default adapter (Gemini/Groq/OpenRouter/Ollama) against a mock Chat Completions endpoint: request shape (tools sanitised, no-arg tools, reasoning effort), **append-only history that echoes Gemini thought-signature extras**, missing tool-call ids, JSON structured output with repair, clear errors for missing key / exhausted quota, schema sanitising + executor JSON decoding, and the sliding-window **rate limiter** (requests and tokens per minute). |
 | `tests/test_anthropic_adapter.py` | 5 | Offline contract test against a mock Messages API: request shape (thinking, effort, caching, tools, fallback beta), response parsing, **append-only history with thinking signatures replayed verbatim**, tool_result pairing, fallback auto-disable on 400, refusal handling, structured output → `TaskSpec`. |
 
 ## 2. Eval suite (live model)

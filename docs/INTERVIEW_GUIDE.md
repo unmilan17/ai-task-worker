@@ -79,8 +79,8 @@ The loop detector catches identical call+outcome three times or three failures i
 reflection note. Hard budgets on steps, time and cost stop the run with an honest `failed` report.
 
 **Q: What if the model replies with text instead of a tool call?**
-The loop nudges it (up to 3 times). Forced tool choice isn't available on current Claude models, so
-nudging is the correct approach.
+The loop nudges it (up to 3 times). Forcing a tool call isn't supported consistently across providers, so
+nudging is the portable approach.
 
 **Q: What if the LLM API is down?**
 The SDK retries 429/5xx with backoff. If it still fails, `LLMError` ends the run with status `error`, and
@@ -141,12 +141,21 @@ approvals, verifier rejection, loop detection, policy blocks, secret redaction. 
 suite runs the real model and scores outcomes deterministically.
 
 **Q: What does it cost?**
-Every run reports tokens and estimated cost (see the evaluation results). Levers: effort level, a
-cheaper model (e.g. Sonnet), prompt caching (enabled), compact snapshots, and auto-retries that don't spend model calls.
+Nothing on the default setup: it runs on Gemini's free tier. Every run reports LLM calls and tokens. The real
+constraint is free-tier **rate limits**, so the adapter has a sliding-window limiter (requests and tokens per
+minute), shows waits in the UI, and the SDK retries 429s. Levers to use fewer calls and tokens: compact snapshots,
+actions that return the new state (fewer turns), auto-retries that don't spend model calls, and effort level.
+
+**Q: Why Gemini and not, say, Groq or a local model?**
+All three work through the same adapter. Gemini's free tier has strong
+tool calling, a long context and no credit card. Groq's free tokens-per-minute cap is smaller than a late-run agent
+request. Local models need a strong GPU and struggle with long tool-use chains. Switching is one line in `.env`, and the
+eval suite measures the difference.
 
 **Q: Why is the conversation history append-only?**
-Claude's thinking blocks are bound to the exact conversation prefix. Editing history invalidates them and
-breaks prompt caching. So notes are appended, never injected into earlier turns (D11).
+Reasoning models tie their reasoning state to the conversation. Gemini 3 returns "thought signatures" on tool calls
+that must be sent back unchanged, and Claude binds thinking blocks to the exact prefix. Editing history would
+break that (and prompt caching), so notes are appended, never injected into earlier turns (D11).
 
 **Q: Biggest weakness?**
 Context growth on very long tasks (append-only + snapshots), a single-threaded browser, and the
@@ -183,11 +192,12 @@ label in the snapshot (improve `labelOf` in `dom_snapshot.js`).
 | Add an eval task | `evals/tasks.yaml` + `evals/checks.py` | write the task in plain English, add a deterministic check function. |
 | Make retries more aggressive | `.env` `MAX_TOOL_RETRIES`, `executor.py` backoff | explain why writes still must not auto-retry. |
 | Make the verifier stricter | `prompts.VERIFIER_SYSTEM` / `verifier.rule_check` | e.g. a rule: every fact used in the summary must have a source. |
-| Use a cheaper model | `.env` `LLM_MODEL=claude-sonnet-5-5` | re-run evals and compare pass rate vs cost. |
+| Switch provider/model | `.env` `LLM_PROVIDER=groq` (+ `GROQ_API_KEY`) or `LLM_MODEL=gemini-3.5-flash-lite` | re-run evals and compare pass rate, steps and time. |
+| Make the agent gentler on a free quota | `.env` `LLM_RPM=4` | explain the sliding-window limiter in `openai_compat.py`. |
 | Add a new error kind (e.g. RATE_LIMITED) | `tools/base.py` (`ErrorKind`, `DEFAULT_HINTS`), `http_api.py` (map 429), `executor.py` (retry with longer delay) | |
 
 ## 6. Numbers to know
-* About 5k lines of Python. 34 automated tests (no API key needed). 8 eval scenarios.
+* About 5.5k lines of Python. 42 automated tests (no API key needed). 8 eval scenarios.
 * Budgets: 60 tool steps, 20 minutes, USD 5 per run. Up to 2 auto-retries. Up to 2 verification-fix rounds.
 * Approval threshold: 10,000.00. Snapshot cap: 9,000 characters.
 * See `docs/EVALUATION.md` for pass rate, steps, time and cost per task.

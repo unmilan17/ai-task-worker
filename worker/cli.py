@@ -84,6 +84,8 @@ def print_event(ev) -> None:
                       + ("[green]PASSED[/]" if v.get("passed") else "[red]FAILED[/]") + f" - {v.get('summary')}")
         for c in v.get("criteria") or []:
             console.print(f"   {'[green]✓' if c.get('met') else '[red]✗'}[/] {c.get('criterion')} [dim]({c.get('evidence')})[/]")
+    elif t == "rate_limit_wait":
+        console.print(f"  [dim]⏳ waiting {d['seconds']}s for the free-tier rate limit[/]")
     elif t == "error":
         console.print(f"[red]{d['message']}[/]")
 
@@ -103,11 +105,11 @@ def print_report(report: dict) -> None:
 
 
 # --------------------------------------------------------------------------- commands
-def warn_if_no_key(provider: str) -> None:
-    import os
-    if provider == "anthropic" and not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
-        console.print("[yellow]Warning: ANTHROPIC_API_KEY is not set (copy .env.example to .env and add your key). "
-                      "Runs will fail unless another Anthropic credential source is configured.[/]")
+def warn_if_no_key(settings) -> None:
+    from worker.llm import key_status
+    ok, msg = key_status(settings)
+    if not ok:
+        console.print(f"[yellow]Warning: {msg} (copy .env.example to .env first). Runs will fail without it.[/]")
 
 
 def cmd_run(args) -> int:
@@ -118,11 +120,11 @@ def cmd_run(args) -> int:
 
     settings = get_settings(headless=not args.headed, model=args.model, effort=args.effort,
                             slow_mo_ms=300 if args.headed else None)
-    warn_if_no_key(settings.llm_provider)
+    warn_if_no_key(settings)
     ensure_sandbox(chaos=args.chaos, reset=args.reset)
     llm = make_llm(settings)
     agent = Agent(llm, settings, CLIHumanChannel(console), on_event=print_event)
-    console.print(Panel(args.task, title=f"Task  [dim](run {agent.run_id}, model {settings.model})[/]"))
+    console.print(Panel(args.task, title=f"Task  [dim](run {agent.run_id}, {settings.llm_provider} · {settings.model})[/]"))
     report = asyncio.run(agent.run(args.task))
     print_report(report)
     console.print(f"Evidence report: [link]{agent.run_dir / 'report.html'}[/]")
@@ -135,7 +137,7 @@ def cmd_serve(args) -> int:
     from sandbox.launcher import loopback_sockets
     from worker.server.app import create_app
     from worker.config import get_settings
-    warn_if_no_key(get_settings().llm_provider)
+    warn_if_no_key(get_settings())
     ensure_sandbox(chaos=args.chaos)
     console.print(f"Dashboard: http://localhost:{args.port}")
     server = uvicorn.Server(uvicorn.Config(create_app(headed=args.headed), log_level="warning"))

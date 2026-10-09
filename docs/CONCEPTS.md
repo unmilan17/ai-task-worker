@@ -35,9 +35,19 @@ Asking the API to return JSON that is **guaranteed** to match a schema (here a p
 the `TaskSpec`, so there is no fragile "please answer in JSON" parsing.
 
 ### Thinking / effort
-Modern Claude models reason internally before answering ("thinking"). With *adaptive* thinking the
-model decides how much to think per step. *Effort* (`low`…`max`) sets how hard it tries, trading cost
-and latency for quality. We show the model's **thinking summary** in the UI as its "thoughts".
+Modern models (Gemini 3, Claude, GPT reasoning models) reason internally before answering ("thinking").
+*Reasoning effort* (`low`/`medium`/`high`) sets how hard they try, trading latency and quota for quality. Some
+providers return reasoning state that must be sent back unchanged on the next request. Gemini calls these
+"thought signatures", which is one reason the transcript is append-only.
+
+### Rate limits (free tiers)
+Free API tiers cap **requests per minute (RPM)**, **tokens per minute (TPM)** and **requests per day (RPD)**.
+Going over returns HTTP 429. An agent is a worst case: dozens of large requests in a row. A *sliding-window rate
+limiter* remembers what was sent in the last 60 seconds and waits just long enough before the next request.
+
+### OpenAI-compatible API
+Many providers (Google Gemini, Groq, OpenRouter, Ollama...) accept the same "Chat Completions" request format
+that OpenAI defined. One client library and one adapter can then talk to all of them, changing only the base URL and key.
 
 ### Prompt caching
 If consecutive requests share the same beginning (system prompt + earlier messages), the API can

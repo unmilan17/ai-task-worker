@@ -57,6 +57,8 @@ class Agent:
             guard=Guard(Policy.from_file(settings.policy_file)),
         )
         self.budget = Budget(settings, llm, cancel=cancel or threading.Event())
+        if hasattr(llm, "on_wait"):   # free-tier rate limiting: show waits in the CLI/UI instead of silence
+            llm.on_wait = lambda s: self.events.emit("rate_limit_wait", step=self.ctx.step, seconds=round(s, 1))
 
     # ------------------------------------------------------------------ public
     async def run(self, task: str) -> dict[str, Any]:

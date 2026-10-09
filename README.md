@@ -50,11 +50,13 @@ systems, and returns a summary with evidence: facts with provenance, screenshots
 | Concise summary + evidence | `report.html` / `report.json`: status, verification table, facts with sources, changes made, approvals, reliability stats, screenshots, session video, full JSONL trace. | `worker/core/report.py` |
 
 Plus: credentials never reach the model (secret placeholders + redaction), prompt-injection resistance,
-a live web dashboard and a CLI, fault injection (`CHAOS=mild|hard`), an eval harness, and 34 automated tests.
+a live web dashboard and a CLI, fault injection (`CHAOS=mild|hard`), an eval harness, and 42 automated tests.
+It runs on **free-tier LLM APIs** (Google Gemini by default), with built-in rate limiting for free quotas.
 
 ## 2. Quick start
 
-**Requirements:** Python 3.11+ (built on 3.12), Windows/macOS/Linux, an Anthropic API key.
+**Requirements:** Python 3.11+ (built on 3.12), Windows/macOS/Linux, and a **free** Google Gemini API key
+(get one in a minute at https://aistudio.google.com/apikey, no credit card). Other free options: see [LLM providers](#llm-providers-free-tiers).
 
 ```bash
 git clone <this repo> ai-task-worker
@@ -64,7 +66,7 @@ python -m venv .venv
 pip install -r requirements.txt
 python -m playwright install chromium
 copy .env.example .env             # macOS/Linux: cp .env.example .env
-# then edit .env and set ANTHROPIC_API_KEY=sk-ant-...
+# then edit .env and set GEMINI_API_KEY=<your free key>
 ```
 
 Start everything (simulated company apps + dashboard):
@@ -99,9 +101,25 @@ pytest -q                                   # automated tests (no API key needed
 Every run writes `runs/<run_id>/` with `report.html`, `report.json`, `trace.jsonl`, `screens/` and `video/`.
 
 ### Configuration
-* `.env`: model (`LLM_MODEL`, default `claude-opus-5-5`), `LLM_EFFORT`, budgets, headless/video.
+* `.env`: provider and model (`LLM_PROVIDER`, `LLM_MODEL`; default Gemini free tier), `LLM_EFFORT`, rate limits, budgets, headless/video.
 * `config/environment.yaml`: what the worker knows about its workplace (systems, URLs, sign-in placeholders, company rules).
 * `config/policy.yaml`: hard guardrails (allowed hosts, approval rules and thresholds).
+
+### LLM providers (free tiers)
+All providers except Anthropic go through one OpenAI-compatible adapter (`worker/llm/openai_compat.py`).
+Switch with two lines in `.env`:
+
+| `LLM_PROVIDER` | Key variable (where to get it) | Default model | Notes |
+|---|---|---|---|
+| `gemini` **(default, recommended)** | `GEMINI_API_KEY` ([AI Studio](https://aistudio.google.com/apikey), free, no card) | `gemini-3.8-flash` | Strong tool calling, long context, vision. Free quota is per model; if one is used up, set `LLM_MODEL=gemini-3.5-flash-lite`. Free-tier prompts may be used by Google to improve products (fine here: all data is fake). |
+| `groq` | `GROQ_API_KEY` ([console](https://console.groq.com/keys), free) | `openai/gpt-oss-120b` | Very fast, but small tokens-per-minute limits on the free tier, so long agent runs are throttled. |
+| `openrouter` | `OPENROUTER_API_KEY` ([openrouter.ai](https://openrouter.ai/keys)) | set `LLM_MODEL` to a `:free` model | Low daily request caps on free accounts. |
+| `ollama` | none | `qwen3:14b` | Fully local and unlimited, but needs a capable GPU. Small models are weaker at long multi-step tool use. |
+| `openai` / `anthropic` | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `gpt-5-mini` / `claude-opus-5-5` | Paid. |
+
+Free tiers limit requests and tokens per minute. The adapter spaces requests to stay under them
+(`LLM_RPM` / `LLM_TPM` override the presets), shows "waiting for rate limit" in the UI, and retries 429s
+with backoff. Model names and quotas change over time, so check your provider's console.
 
 ## 4. How it works
 
@@ -119,7 +137,7 @@ flowchart LR
     G -. approval .-> U
     A --> V[Verifier read-only] --> S
     A --> R[Report + evidence]
-    LLM[(Claude)] <--> A
+    LLM[(LLM: Gemini / Groq / Ollama / ...)] <--> A
     LLM <--> L
     LLM <--> V
 ```
@@ -171,16 +189,17 @@ Summary below. Each one is explained with the alternatives in **[docs/DESIGN_DEC
 | Fresh, read-only LLM auditor + deterministic rule check | Self-checks inherit the executor's mistakes; read-only can't cause harm |
 | Guardrails & approvals in code, on the real payload | Prompts are advice, code is enforcement; robust to prompt injection |
 | Secret placeholders + redaction | The model can't leak what it never sees |
-| Append-only transcript, adaptive thinking, effort, prompt caching | Keeps Claude's reasoning valid across steps and makes each step cheap |
+| One OpenAI-compatible adapter + presets (Gemini default), client-side rate limiter | Runs on free tiers; switching provider is one line in `.env` |
+| Append-only transcript that preserves provider extras (e.g. Gemini thought signatures) | Keeps the model's reasoning valid across steps; required for multi-turn tool calling on reasoning models |
 | Provider-agnostic LLM interface + `ScriptedLLM` | Vendor independence; deterministic, free tests of the real loop |
 | Environment knowledge as data, **zero task-specific code** | New tasks need no code; new systems need config or one Tool class |
 
 ## 6. Evaluation & tests
 
-* **34 automated tests** (`pytest -q`, no API key): the real loop, browser, tools, guardrails and sandbox
+* **42 automated tests** (`pytest -q`, no API key): the real loop, browser, tools, guardrails and sandbox
   driven by a scripted LLM (approval rejection respected, failed submits never auto-retried, fake "done"
   claims rejected, secrets never in traces...), unit tests for the safety/runtime pieces, sandbox
-  behaviour, and an offline contract test of the Claude adapter.
+  behaviour, and offline contract tests of both LLM adapters (mock API endpoints) and the free-tier rate limiter.
 * **8-scenario eval suite** (`python -m worker eval --repeat 3`) with the live model and
   **deterministic outcome checks on the real ERP database / files**: headline task, mild chaos, hard
   chaos (API fallback), approval rejected, approval granted, ambiguity, inbox triage with
@@ -192,8 +211,9 @@ Details and results: **[docs/EVALUATION.md](docs/EVALUATION.md)**.
 
 | Component | Used for |
 |---|---|
-| **Anthropic Claude API**, model `claude-opus-5-5` (configurable, e.g. `claude-sonnet-5-5`), Python SDK `anthropic` | reasoning, tool use, structured output (TaskSpec), adaptive thinking, prompt caching, server-side refusal fallback |
-| OpenAI Python SDK (optional adapter, untested live) | demonstrates provider independence |
+| **Google Gemini API, free tier** (default), model `gemini-3.8-flash` via its OpenAI-compatible endpoint | reasoning, tool calling, JSON task spec |
+| OpenAI Python SDK (`openai`) | client for every OpenAI-compatible provider: Gemini, Groq, OpenRouter, Ollama, OpenAI |
+| Optional: Groq / OpenRouter free tiers, local models via Ollama, Anthropic Claude API (paid, `anthropic` SDK) | alternative providers, one line in `.env` |
 | **Playwright** (Chromium) | real browser automation, screenshots, video recording |
 | **FastAPI** + Uvicorn + WebSockets | dashboard backend; the three simulated company apps |
 | Jinja2 | HTML templates for the sandbox apps and the evidence report |
@@ -205,7 +225,7 @@ Details and results: **[docs/EVALUATION.md](docs/EVALUATION.md)**.
 | pytest + pytest-asyncio | tests |
 
 No external services other than the LLM API. No real company systems or credentials. Everything else runs locally.
-AI coding assistance (Claude) was used while building this project.
+AI coding assistants were used during development, as the brief permits.
 
 ## 8. Assumptions
 * The worker acts for an Accounts Payable employee at the fictional *Northwind Traders*, with that employee's access.
@@ -222,7 +242,8 @@ AI coding assistance (Claude) was used while building this project.
 * Append-only context grows on very long tasks (no compaction yet). One browser tab and sequential tool calls.
 * No checkpoint/resume if the process dies mid-run. The dashboard has no authentication (local use).
 * Approval rules match field names/button text and need tuning for systems with unusual naming.
-* The OpenAI adapter is not tested against the live API.
+* Free tiers have per-minute and per-day quotas, so runs are slower and a full eval may need more than one day of quota.
+* The LLM adapters are verified offline against mock API endpoints. Live results depend on your provider and model (see [EVALUATION.md](docs/EVALUATION.md)).
 
 More: **[docs/LIMITATIONS_AND_ROADMAP.md](docs/LIMITATIONS_AND_ROADMAP.md)**.
 

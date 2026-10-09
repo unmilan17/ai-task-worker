@@ -24,17 +24,25 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass
 class Settings:
     # ---- LLM -------------------------------------------------------------
-    llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "anthropic"))
-    model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "claude-opus-5-5"))
+    # Provider: gemini (free tier, default) | groq | openrouter | ollama | openai | anthropic.
+    # All but "anthropic" go through the OpenAI-compatible adapter (llm/openai_compat.py).
+    llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "gemini").strip().lower())
+    # Empty = the provider's default model (see DEFAULT_MODELS below).
+    model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "").strip())
     # Effort controls how hard the model thinks per step (low|medium|high|xhigh|max).
     effort: str = field(default_factory=lambda: os.getenv("LLM_EFFORT", "medium"))
+    # Client-side rate limiting for free tiers (0 = use the provider preset's default).
+    llm_rpm: int = field(default_factory=lambda: int(os.getenv("LLM_RPM", "0")))
+    llm_tpm: int = field(default_factory=lambda: int(os.getenv("LLM_TPM", "0")))
+    # Override the provider's API base URL (e.g. a self-hosted OpenAI-compatible server).
+    llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "").strip())
     # Server-side refusal fallback (Anthropic only). Lets the API re-run a declined
     # request on a fallback model instead of failing the step.
     refusal_fallback: bool = field(default_factory=lambda: _bool("ANTHROPIC_REFUSAL_FALLBACK", True))
 
     # ---- budgets / loop control -----------------------------------------
     max_steps: int = field(default_factory=lambda: int(os.getenv("MAX_STEPS", "60")))
-    max_minutes: float = field(default_factory=lambda: float(os.getenv("MAX_MINUTES", "20")))
+    max_minutes: float = field(default_factory=lambda: float(os.getenv("MAX_MINUTES", "30")))
     max_cost_usd: float = field(default_factory=lambda: float(os.getenv("MAX_COST_USD", "5")))
     max_verify_rounds: int = field(default_factory=lambda: int(os.getenv("MAX_VERIFY_ROUNDS", "2")))
     max_tool_retries: int = field(default_factory=lambda: int(os.getenv("MAX_TOOL_RETRIES", "2")))
@@ -57,9 +65,23 @@ class Settings:
         os.getenv("SECRETS_FILE", PROJECT_ROOT / "sandbox" / "test_credentials.json")))
 
 
+# Default model per provider when LLM_MODEL is not set. Free-tier model availability changes
+# over time - check the provider's console (e.g. Google AI Studio) and override LLM_MODEL if needed.
+DEFAULT_MODELS = {
+    "gemini": "gemini-3.8-flash",
+    "groq": "openai/gpt-oss-120b",
+    "openrouter": "",            # pick a ":free" model on openrouter.ai and set LLM_MODEL
+    "ollama": "qwen3:14b",
+    "openai": "gpt-5-mini",
+    "anthropic": "claude-opus-5-5",
+}
+
+
 def get_settings(**overrides) -> Settings:
     s = Settings()
     for k, v in overrides.items():
         if v is not None:
             setattr(s, k, v)
+    if not s.model:
+        s.model = DEFAULT_MODELS.get(s.llm_provider, "")
     return s

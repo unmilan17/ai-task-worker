@@ -34,7 +34,7 @@ from sandbox import config as sandbox_config
 
 from ..config import get_settings
 from ..core.agent import Agent, new_run_id
-from ..llm import make_llm
+from ..llm import key_status, make_llm
 from ..runtime.events import Event
 from ..runtime.human import HumanResponse, WebHumanChannel
 
@@ -199,8 +199,7 @@ def create_app(headed: bool = False) -> FastAPI:
     @app.get("/api/config")
     def get_config() -> dict[str, Any]:
         return {"model": settings.model, "provider": settings.llm_provider, "samples": SAMPLE_TASKS,
-                "api_key_present": bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY")
-                                        or os.getenv("ANTHROPIC_AUTH_TOKEN")),
+                "api_key_present": key_status(settings)[0], "api_key_message": key_status(settings)[1],
                 "systems": {"SupplierHub": sandbox_config.SUPPLIERHUB_URL, "ERP": sandbox_config.ERP_URL,
                             "Webmail": sandbox_config.MAIL_URL},
                 "chaos": _sandbox_admin("health", method="GET").get("chaos")}

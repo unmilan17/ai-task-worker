@@ -5,7 +5,8 @@ description = "Autonomous AI Task Worker - takes a natural-language task and com
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "anthropic>=1.12",
+  "openai>=1.40",        # client for Gemini / Groq / OpenRouter / Ollama (OpenAI-compatible APIs)
+  "anthropic>=1.12",     # optional paid provider
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "playwright>=1.45",
@@ -21,7 +22,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-openai = ["openai>=1.40"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.scripts]

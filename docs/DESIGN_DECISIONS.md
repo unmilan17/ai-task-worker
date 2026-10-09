@@ -159,33 +159,45 @@ can't leak it or be tricked into revealing it. It also mirrors how production sy
 ---
 
 ### D11. Append-only conversation history
-**Choice:** the Anthropic adapter appends `response.content` verbatim (including thinking blocks) and
-never edits earlier turns. Notes (reflection, budget warnings, verifier feedback) are *appended* as text
+**Choice:** both adapters store each assistant turn exactly as returned and never edit earlier turns. The
+OpenAI-compatible adapter keeps provider extras on tool calls (Gemini's thought signatures). The Anthropic
+adapter keeps thinking blocks. Notes (reflection, budget warnings, verifier feedback) are *appended* as text
 blocks after tool results.
 
-**Why:** current Claude models bind reasoning ("thinking") blocks to the exact conversation prefix that
-produced them. Editing history invalidates them (an error on newer accounts) and also breaks prompt
+**Why:** reasoning models bind their reasoning state to the conversation. Gemini 3 requires its thought
+signatures to be sent back with function-call turns, and Claude binds thinking blocks to the exact
+conversation prefix that produced them. Editing history invalidates them (an error on newer accounts) and also breaks prompt
 caching. Append-only keeps the model's reasoning intact across steps and keeps cost down via caching.
 Trade-off: long tasks grow the context. Snapshots are compact (D3) and capped. For very long tasks the
 roadmap has server-side context editing/compaction.
 
 ---
 
-### D12. Model and settings: Claude Opus 5.5, adaptive thinking, effort = medium, prompt caching
-**Choice:** `claude-opus-5-5` by default (configurable, e.g. `claude-sonnet-5-5` for cheaper runs),
-adaptive thinking with summarised display (the summary is shown to the user as the agent's thoughts),
-`effort=medium`, top-level prompt caching, and the server-side refusal fallback.
+### D12. Model choice: a free tier by default (Gemini Flash), paid models optional
+**Choice:** Google Gemini's free tier (`gemini-3.8-flash`) through its OpenAI-compatible endpoint, with
+`reasoning_effort=medium` and a client-side rate limiter. Groq, OpenRouter, Ollama, OpenAI and Anthropic Claude are
+one `.env` line away.
 
-**Why:** multi-step tool use with recovery is where model capability matters most. Effort is the cost
-lever, and caching makes each step pay only for new tokens. Forced `tool_choice` isn't supported on
-current models, so the loop nudges the model if it replies without a tool call.
+**Alternatives:** paid frontier models only; local models only; Groq's free tier as the default.
+
+**Why free Gemini Flash:** no credit card, strong native tool calling, a long context window and vision. Groq's free
+tier is faster but its tokens-per-minute cap is smaller than a single agent request late in a run. Local models
+need a strong GPU and are weaker at long multi-step tool use. The agent does not depend on the model: quality
+and cost are a configuration choice, measured with the eval suite.
+
+**Rate limits are a first-class concern:** an agent sends many large requests in a row, which is exactly what
+free tiers throttle. So the adapter throttles itself (sliding window on requests and tokens per minute), shows
+the wait in the UI, and the SDK retries any 429 with backoff. The loop never forces `tool_choice`, which some
+providers don't support. It nudges the model if it replies without a tool call.
 
 ---
 
 ### D13. Provider-agnostic LLM interface + a scripted fake
-**Choice:** `LLMClient` / `Conversation` abstractions with Anthropic, OpenAI and `ScriptedLLM` implementations.
+**Choice:** `LLMClient` / `Conversation` abstractions with an OpenAI-compatible implementation (Gemini, Groq,
+OpenRouter, Ollama, OpenAI), an Anthropic implementation, and `ScriptedLLM`.
 
-**Why:** the agent logic is independent of the vendor. More importantly, `ScriptedLLM` lets the test
+**Why:** the agent logic is independent of the vendor. That is what made moving the default from a paid model to a
+free tier a configuration change rather than a rewrite. More importantly, `ScriptedLLM` lets the test
 suite run the **real** loop, tools, browser, policy and sandbox deterministically and for free. Only
 the decisions are scripted. That is how failure handling (retry rules, approvals, verifier
 rejection, loop detection) is tested without paying for or depending on a live model.
@@ -224,7 +236,8 @@ debugging section in [INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md)).
 ---
 
 ### D17. Budgets as hard limits
-**Choice:** max tool steps (60), wall-clock minutes (20), and estimated cost (USD 5) per run, checked
+**Choice:** max tool steps (60), wall-clock minutes (30, generous because of free-tier rate limits), and estimated
+cost (USD 5, for paid providers) per run, checked
 before every tool call, plus a 75%-budget notice to the model.
 
 **Why:** an autonomous system must have bounded cost and runtime even when everything else goes

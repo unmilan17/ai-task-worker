@@ -13,6 +13,7 @@ async function boot() {
   $("model").textContent = `${cfg.provider} · ${cfg.model}`;
   $("systems").innerHTML = Object.entries(cfg.systems).map(([k, v]) => `<a href="${v}" target="_blank" rel="noopener">${k} ↗</a>`).join("");
   $("keywarn").classList.toggle("hidden", cfg.api_key_present);
+  if (cfg.api_key_message) $("keywarn").textContent = `${cfg.api_key_message} Then restart the server.`;
   if (cfg.chaos) $("chaos").value = cfg.chaos;
   $("samples").innerHTML = cfg.samples.map((s, i) => `<button data-i="${i}" title="${esc(s.task)}">${esc(s.label)}</button>`).join("");
   $("samples").onclick = (e) => { const b = e.target.closest("button"); if (b) $("task").value = cfg.samples[b.dataset.i].task; };
@@ -171,6 +172,13 @@ function handle(ev, live) {
       const v = d.verdict;
       add(`🔎 Verification (${esc(v.method)}): <span class="badge ${v.passed ? "ok" : "fail"}">${v.passed ? "PASSED" : "FAILED"}</span> ${esc(v.summary)}
         ${(v.criteria || []).length ? `<ul>${v.criteria.map((c) => `<li class="${c.met ? "yes" : "no"}">${c.met ? "✓" : "✗"} <span style="color:var(--ink);font-weight:400">${esc(c.criterion)} <span class="muted">- ${esc(c.evidence)}</span></span></li>`).join("")}</ul>` : ""}`, "card");
+      break;
+    }
+    case "rate_limit_wait": {
+      // Collapse consecutive waits into one line.
+      const last = $("timeline").lastElementChild;
+      const html = `⏳ Waiting ${esc(d.seconds)}s for the free-tier rate limit`;
+      if (last && last.classList.contains("wait")) last.innerHTML = html; else add(html, "retry wait");
       break;
     }
     case "error": add(`⚠ ${esc(d.message)}`, "error"); break;

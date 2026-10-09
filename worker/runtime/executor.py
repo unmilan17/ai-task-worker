@@ -28,11 +28,33 @@ from .context import RunContext
 _TYPES = {"string": str, "integer": int, "boolean": bool, "array": list, "object": dict, "number": (int, float)}
 
 
+def _decode_json(v: Any) -> Any:
+    """Some providers send objects/arrays as JSON-encoded strings (see llm/openai_compat.sanitize_schema)."""
+    if isinstance(v, str) and v.strip()[:1] in ("{", "["):
+        try:
+            return json.loads(v)
+        except ValueError:
+            return v
+    return v
+
+
 def validate_args(tool: Tool, args: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
-    """Light JSON-schema check with friendly coercions ("12" -> 12). Returns (args, error)."""
+    """Light JSON-schema check with friendly coercions ("12" -> 12, '{"a":1}' -> {"a": 1}).
+    Returns (args, error)."""
     if not isinstance(args, dict):
         return args, "arguments must be a JSON object"
+    if "__invalid_json__" in args:
+        return args, f"the arguments were not valid JSON ({args['__invalid_json__'][:200]!r})"
     sch = tool.input_schema
+    args = dict(args)
+    for k, spec in sch.get("properties", {}).items():
+        if k in args and spec.get("type") in ("object", "array"):
+            if args[k] in ("", "null") and k not in sch.get("required", []):
+                del args[k]          # an empty optional JSON-string field means "not provided"
+                continue
+            args[k] = _decode_json(args[k])
+            if spec.get("type") == "array" and isinstance(args[k], list) and spec.get("items", {}).get("type") == "object":
+                args[k] = [_decode_json(x) for x in args[k]]
     props = sch.get("properties", {})
     missing = [k for k in sch.get("required", []) if k not in args]
     if missing:
