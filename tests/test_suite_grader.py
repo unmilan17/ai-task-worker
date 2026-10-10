@@ -56,6 +56,12 @@ def test_silent_damage_on_duplicate_or_wrong_values():
     assert grade(A1, BASE, after(GOOD, extra), rep("succeeded"), []).verdict == "silent_damage"
 
 
+def test_provider_error_is_not_judged_as_agent_behaviour():
+    assert grade(A1, BASE, BASE, rep("error", "quota used up"), []).verdict == "error"
+    dup = {**GOOD, "bill_id": "B-1003"}
+    assert grade(A1, BASE, after(GOOD, dup), rep("error"), []).verdict == "silent_damage"   # damage still counts
+
+
 def test_under_claim_is_inconsistent():
     assert grade(A1, BASE, after(GOOD), rep("failed"), []).verdict == "inconsistent"
 

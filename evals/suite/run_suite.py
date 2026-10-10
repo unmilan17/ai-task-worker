@@ -161,6 +161,8 @@ def _scorecard(results: list[dict], spec: dict) -> dict[str, tuple[int, int]]:
     by_id: dict[str, list[bool]] = defaultdict(list)
     for r in results:
         sid = r.get("suite_id", r["id"])
+        if r["verdict"] == "error":
+            continue                      # cut off by the provider: no verdict on the agent
         by_id[sid].append(r["verdict"] == "pass")
         for c in r.get("checks", []):
             if c.get("tag"):
