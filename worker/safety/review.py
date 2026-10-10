@@ -92,15 +92,49 @@ missing field for missing_value) and write ONE short question for the user."""
 _ECHO_TOOLS = {"browser_type"}          # a dropdown choice is page data: its value comes from the page
 
 
+# Exact computation tools: their result is a source only if their inputs were (no "Net 30" made up and then
+# turned into a due date). Maps tool -> the arguments that carry data.
+_DERIVED_TOOLS = {"convert_amount": ("text",), "convert_date": ("text",), "due_date_from_terms": ("issue_date", "terms"),
+                  "calculate": ("expression",)}
+_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _inputs_sourced(name: str, args: dict[str, Any], corpus: str) -> bool:
+    for key in _DERIVED_TOOLS[name]:
+        value = str(args.get(key) or "")
+        if name == "calculate":         # every sizeable number in the expression must be an amount we saw
+            amounts = find_amounts(corpus)
+            for n in _NUMBER.findall(value):
+                m = parse_amount(n)
+                if m is not None and abs(m.amount) >= 100 and abs(m.amount) not in amounts:
+                    return False
+        elif unsourced_values({key: value}, corpus):
+            return False
+    return True
+
+
 def _corpus(ctx: "RunContext") -> str:
-    """Everything the worker read, was told, or computed in this run."""
+    """Everything the worker read, was told, or computed (from sourced inputs) in this run.
+
+    Not sources: echoes of what the worker typed, computations on values it made up, and `remember`ed facts -
+    except after the worker has looked at an image (a scanned page), because a value read from an image can
+    only be written down through `remember`."""
     parts = [ctx.task_text]
+    args_by_call: dict[str, dict[str, Any]] = {}
+    seen_image = False
     for e in ctx.events.history:
-        if e.type in ("tool_result", "observation") and e.data.get("output") and e.data.get("name") not in _ECHO_TOOLS:
+        if e.type == "tool_call":
+            args_by_call[e.data.get("call_id", "")] = e.data.get("args") or {}
+        elif e.type in ("tool_result", "observation") and e.data.get("output") and e.data.get("name") not in _ECHO_TOOLS:
+            name = e.data.get("name")
+            if name in _DERIVED_TOOLS and not _inputs_sourced(name, args_by_call.get(e.data.get("call_id", ""), {}),
+                                                              "\n".join(parts)):
+                continue
+            seen_image = seen_image or bool(e.data.get("image"))
             parts.append(str(e.data["output"]))
         elif e.type == "human_response":
             parts.append(str(e.data.get("response", {}).get("answer", "")))
-        elif e.type == "memory_fact":
+        elif e.type == "memory_fact" and seen_image:
             f = e.data.get("fact", {})
             parts.append(f"{f.get('value', '')} {f.get('source', '')}")
     return "\n".join(parts)

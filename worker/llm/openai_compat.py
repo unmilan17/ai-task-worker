@@ -226,6 +226,10 @@ class RequestTooLarge(LLMError):
     """This model's limits cannot fit the request at all (e.g. a free tier's tokens-per-minute cap)."""
 
 
+class EmptyResponse(LLMError):
+    """The model replied with neither text nor tool calls, twice (seen with Gemini: 0 output tokens)."""
+
+
 DUMMY_SIGNATURE = {"google": {"thought_signature": "skip_thought_signature_validator"}}
 
 
@@ -298,6 +302,15 @@ class OpenAICompatClient(LLMClient):
         if self.preset.reasoning_effort and self.effort in {"low", "medium", "high"}:
             kwargs["reasoning_effort"] = self.effort
         est = _estimate_tokens(messages, tools)
+        for _ in range(2):
+            resp, usage = await self._create(kwargs, messages, est)
+            msg = resp.choices[0].message
+            if msg.content or msg.tool_calls:
+                return resp, usage
+        raise EmptyResponse(f"{self.provider}:{self.model} returned an empty reply twice "
+                            f"(finish_reason={resp.choices[0].finish_reason}).")
+
+    async def _create(self, kwargs: dict[str, Any], messages: list[dict[str, Any]], est: int):
         for attempt in range(self.rate_retries + 1):
             entry = await self.limiter.acquire(est, self.on_wait)
             try:

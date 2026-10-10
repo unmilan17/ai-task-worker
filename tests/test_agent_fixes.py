@@ -240,3 +240,29 @@ def test_name_collision_check_is_deterministic():
     assert name_collisions("Log Fabrikam's invoice.", {"vendor_id": "V-0103"}, [rows]) == []
     # no entity reference in the write -> nothing to check
     assert name_collisions("Log the latest Contoso invoice.", {"invoice_number": "X-1"}, [rows]) == []
+
+
+def test_derived_values_and_remembered_facts_need_a_real_source():
+    """D7 re-run: blocked once, the model called due_date_from_terms with terms it made up ("Net 30" was only in
+    the unreadable PDF) and remembered the result. Neither may count as a source."""
+    from types import SimpleNamespace
+
+    from worker.safety.review import _corpus, unsourced_values
+
+    def ev(type_, **data):
+        return SimpleNamespace(type=type_, data=data)
+
+    page = ev("tool_result", name="browser_navigate", call_id="1", output="Invoice X-9  Date 2026-09-05  Total 2,400.00")
+    calc = [ev("tool_call", call_id="2", name="due_date_from_terms", args={"issue_date": "2026-09-05", "terms": "Net 30"}),
+            ev("tool_result", name="due_date_from_terms", call_id="2", output="Due date = 2026-10-05 (Net 30 from 2026-09-05)")]
+    fact = ev("memory_fact", fact={"key": "due", "value": "2026-10-05", "source": "computed Net 30"})
+    fields = {"due_date": "2026-10-05"}
+
+    def corpus(*events):
+        return _corpus(SimpleNamespace(task_text="Log the invoice.", events=SimpleNamespace(history=list(events))))
+
+    assert unsourced_values(fields, corpus(page, *calc, fact)) == [("due_date", "2026-10-05")]
+    terms_page = ev("tool_result", name="browser_navigate", call_id="0", output="Payment terms: Net 30")
+    assert unsourced_values(fields, corpus(terms_page, page, *calc)) == []           # real terms -> fine
+    scan = ev("tool_result", name="file_read", call_id="3", output="(scanned page image attached)", image=True)
+    assert unsourced_values(fields, corpus(page, scan, fact)) == []                  # read off an image -> fine

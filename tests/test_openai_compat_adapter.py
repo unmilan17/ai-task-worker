@@ -313,3 +313,19 @@ def test_default_chain_uses_other_gemini_models(monkeypatch):
     monkeypatch.setenv("MISTRAL_API_KEY", "k2")
     llm = make_llm(get_settings(llm_provider="gemini", model="m", llm_fallbacks="mistral"))
     assert llm.chain() == ["gemini:m", "mistral:mistral-small-latest"]
+
+
+@pytest.mark.asyncio
+async def test_empty_replies_move_the_request_to_the_next_model(monkeypatch):
+    """Seen live: gemini-2.5-flash answered with no text and no tool calls (0 output tokens), four times.
+    One empty reply is retried; a second one moves this request to the next model in the chain."""
+    from worker.llm import fallback
+    from worker.llm.fallback import FallbackClient
+    monkeypatch.setattr(fallback, "_EXHAUSTED", {})
+    empty = _completion({"content": None}, finish="stop", completion_tokens=0)
+    a = MockAPI([(200, empty), (200, empty)])
+    b = MockAPI([(200, TURN_1)])
+    llm = FallbackClient([_client(a, monkeypatch, "mute"), _client(b, monkeypatch, "ok")])
+    turn = await llm.conversation("S", executor_registry().specs()).send(user_text="go")
+    assert turn.tool_calls[0].name == "browser_navigate" and llm.model == "ok"
+    assert len(a.requests) == 2 and fallback._EXHAUSTED == {}       # not marked as out of quota

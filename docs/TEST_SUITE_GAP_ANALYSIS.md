@@ -42,7 +42,7 @@ x/N and the scorecard per evaluation criterion. The grader itself is unit-tested
 
 ## Coverage, case by case
 
-Legend for **Evidence**: ✅ = passed in a live run (Gemini free tier, 2026-10-10); 🧪 = deterministic/offline test passes; 🔴 = needs a live LLM run (pending: free quota);
+Legend for **Evidence**: ✅ = passed in a live run (Gemini free tier, 2026-10-10/11); 🧪 = deterministic/offline test passes; 🔴 = needs a live LLM run (pending: free quota);
 ⚠️ = model-dependent, with the mitigation named; 📝 = manual.
 
 ### A. Autonomy and execution
@@ -75,29 +75,29 @@ Legend for **Evidence**: ✅ = passed in a live run (Gemini free tier, 2026-10-1
 ### D. Reliability
 | ID | How | Evidence |
 |---|---|---|
-| D1 | Failed submits are never auto-retried; check, then resubmit. | 🧪 (scripted, chaos) · 🔴 |
-| D2 | Login page detected → re-login → refill. | 🧪 switch · 🔴 |
-| D3 | A blocked click is reported as "covered by a dialog - close it first". | 🧪 switch · 🔴 |
+| D1 | Failed submits are never auto-retried; check, then resubmit. | 🧪 (scripted, chaos) · ✅ **live pass** (HTTP 500 → checked the list → saved via API, one record) |
+| D2 | Login page detected → re-login → refill. | 🧪 switch · ✅ **live pass** |
+| D3 | A blocked click is reported as "covered by a dialog - close it first". | 🧪 switch · ✅ **live pass** |
 | D4 | Validation error text + hint; `convert_date` to `DD-MM-YYYY`. | ✅ **live pass** |
-| D5 | Circuit breaker: 3 spaced attempts + 1 probe, then stop; failure report with the extracted values. | 🧪 breaker test · 🔴 |
-| D6 | The agent reads the HTML invoice page; the PDF is optional. | 🧪 switch · 🔴 |
-| D7 | Corrupt PDF → classified error with "do not guess"; the provenance check blocks invented values. | 🧪 · 🔴 |
+| D5 | Circuit breaker: 3 spaced attempts + 1 probe, then stop; failure report with the extracted values. | 🧪 breaker test · ✅ **live pass** (stopped in 13 steps) |
+| D6 | The agent reads the HTML invoice page; the PDF is optional. | 🧪 switch · ✅ **live pass** |
+| D7 | Corrupt PDF → classified error with "do not guess"; the provenance check blocks invented values. | 🧪 · ❌ live: silent damage (assumed due date; echo + "best judgement" holes, fixed in D25) · re-run pending |
 | D8 | Runner cancels after the 3rd save and restarts the same task; duplicate checks + ERP rejection. | 🔴 |
-| D9 | Loop detector + budgets; the API is a legitimate alternative route. | 🧪 · 🔴 |
+| D9 | Loop detector + budgets; the API is a legitimate alternative route. | 🧪 · ✅ **live pass** (switched to the API) |
 
 ### E. Verification
 | ID | How | Evidence |
 |---|---|---|
 | E1 | The independent read-only verifier re-reads the bill list and finds it missing → fix round → honest failure. | ✅ **live pass** (×3, honest failure; the third run stopped itself after 2 writes with a clear report) |
-| E2 | The verifier compares the saved amount with the source; the edit feature allows a correction. | 🔴 |
+| E2 | The verifier compares the saved amount with the source; the edit feature allows a correction. | ✅ **live pass** |
 | E3 | Auditor read-back after the last write; judged on A1 (tag E3). | ✅ live (on A1) |
-| E4 | Partial-success summary must name INV-W-10. | 🔴 |
+| E4 | Partial-success summary must name INV-W-10. | ⚠️ live: honest failure (budget out after 3 of 4 bills; `browser_fill_form` added, D26) · re-run pending |
 | E5 | Aggregate over all runs: zero false success / silent damage. | 🔴 |
 
 ### F. Clarification and approval
 | ID | How | Evidence |
 |---|---|---|
-| F1 | ⚠️ Flash-Lite tends to pick silently. Mitigated by the **ambiguity review**, which asks before the write. | ✅ **live pass** after fix (first run: fail_behaviour) |
+| F1 | ⚠️ Flash-Lite tends to pick silently. Mitigated by the **ambiguity review**, which asks before the write, and (since D27) a deterministic name-collision check that does not depend on the model. | ✅ **live pass** after fix on 3.5-flash-lite (first run: fail_behaviour); ❌ silent damage on the 3.1-flash-lite fallback → D27 · re-run pending |
 | F2 | `convert_date` flags `03/04/2026` as ambiguous; the review asks; the shipped-note variant needs no question. | 🧪 · 🔴 |
 | F3 | The provenance check blocks an invented due date; the review flags missing_value. | 🧪 unsourced test · 🔴 |
 | F4 | Approval gate in code, threshold ₹5,00,000 (correct parsing of Indian amounts). | ✅ **live pass** (reject) |

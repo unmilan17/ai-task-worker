@@ -371,3 +371,24 @@ collisions are a common, mechanical pattern, so they should not depend on how st
 keep false alarms away: whole-word matching ("Acme Corp" does not match "Acme Corporation") and one-ID-per-line
 (a dropdown that lists every vendor on one line is ignored). The LLM reviewer still covers the cases that need
 judgement (ambiguous dates, missing values, ties on "latest").
+
+### D28. Close the laundering routes: computed and remembered values must have a real origin
+**Choice:** the provenance corpus is built in order. A result of an exact computation tool (`due_date_from_terms`,
+`convert_date`, `convert_amount`, `calculate`) counts as a source only if that call's own inputs were sourced: the
+terms text, the issue date, and every sizeable number in an expression. `remember`ed facts count only after the
+worker has looked at an image (a scanned page). A value read from an image can only be written down through
+`remember`; anywhere else, a fact is just the worker's own claim.
+
+**Why (live D7 re-run):** the D25 fix worked. The invented due date was blocked ("do not appear in anything you
+read"). The model then called `due_date_from_terms(issue_date, "Net 30")` with terms it had made up (the real terms
+were only in the unreadable PDF) and `remember`ed the result, and both counted as sources. Any check that trusts
+the agent's own outputs can be gamed by the agent, so the corpus now only trusts what came from outside.
+
+Two related fixes from the same night:
+- **`find_dates` missed dates after a reference.** In `X-9  Date 2026-09-05` the pattern for "9 &lt;Month&gt; 2026"
+  swallowed "9  Date 2026", so the real date was never seen and a correct value could be blocked. The finder now
+  uses a lookahead, so candidates can overlap.
+- **Empty model replies move to the next model.** `gemini-2.5-flash` once answered with no text and no tool
+  calls (0 output tokens) four times, and the run ended "stopped calling tools". An empty reply is retried once.
+  A second empty reply raises `EmptyResponse`, and the fallback chain tries the next model for that request
+  (without marking the model's quota as used up).

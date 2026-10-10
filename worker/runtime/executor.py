@@ -170,5 +170,6 @@ class ToolExecutor:
                 error_kind=res.error_kind.value if res.error_kind else None,
                 output=res.output[:4000], hint=res.hint, duration_s=round(time.time() - t0, 2),
                 screenshot=res.screenshot, side_effect=res.side_effect, attempts=attempt,
+                image=bool(res.image_path),
                 data=ctx.vault.redact_obj(json.loads(json.dumps(res.data, default=str))))
             return res

@@ -136,9 +136,10 @@ def date_candidates(text: str) -> list[date]:
         return []
 
 
+# A lookahead, so candidates may overlap: in "X-9  Date 2026-09-05" the words "9 Date 2026" must not hide the date.
 _DATE_FINDER = re.compile(
-    r"\b(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/\-.]\d{1,2}[/\-.]\d{4}|"
-    r"\d{1,2}(?:st|nd|rd|th)?[\s\-]+[A-Za-z]{3,9}\.?,?[\s\-]+\d{4}|[A-Za-z]{3,9}\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})\b")
+    r"(?=\b(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/\-.]\d{1,2}[/\-.]\d{4}|"
+    r"\d{1,2}(?:st|nd|rd|th)?[\s\-]+[A-Za-z]{3,9}\.?,?[\s\-]+\d{4}|[A-Za-z]{3,9}\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})\b)")
 
 
 def find_dates(text: str) -> set[date]:
