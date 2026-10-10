@@ -234,3 +234,82 @@ def test_rate_limiter_enforces_requests_and_tokens_per_window():
         asyncio.run(scenario())
     finally:
         mod.asyncio.sleep = orig
+
+
+# --------------------------------------------------------------------------- fallback chain
+DAILY_429 = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Quota exceeded",
+                       "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                                    "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+                                                    "quotaValue": "500"}]}]}}
+
+
+def _client(api, monkeypatch, model):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    c = OpenAICompatClient("gemini", model)
+    c.client = openai.AsyncOpenAI(api_key="k", base_url="http://mock/", max_retries=0,
+                                  http_client=openai.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(api.handler)))
+    return c
+
+
+@pytest.mark.asyncio
+async def test_fallback_switches_model_when_daily_quota_is_used_up(monkeypatch):
+    from worker.llm import fallback
+    from worker.llm.fallback import FallbackClient
+    monkeypatch.setattr(fallback, "_EXHAUSTED", {})
+    a = MockAPI([(429, DAILY_429)])
+    b = MockAPI([(200, TURN_1), (200, TURN_2)])
+    llm = FallbackClient([_client(a, monkeypatch, "model-a"), _client(b, monkeypatch, "model-b")])
+    switches = []
+    llm.on_switch = lambda old, new, why: switches.append((old, new))
+    conv = llm.conversation("S", executor_registry().specs())
+    t1 = await conv.send(user_text="go")
+    assert t1.tool_calls[0].name == "browser_navigate" and llm.model == "model-b"
+    assert switches == [("gemini:model-a", "gemini:model-b")]
+    await conv.send(tool_outcomes=[ToolOutcome("call_a", "page")])
+    assert len(a.requests) == 1                      # the exhausted model is not asked again
+    sent = b.requests[1]["body"]["messages"]
+    assert all("_by" not in m for m in sent)         # internal tag never sent
+    assert sent[2]["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "SIG123"}}  # same model
+    assert llm.models_used == ["model-b"] and llm.usage.calls == 2
+
+
+def test_extras_are_dropped_for_a_different_model():
+    from worker.llm.openai_compat import prepare_messages
+    hist = [{"role": "assistant", "content": "", "_by": "model-a",
+             "tool_calls": [{"id": "1", "type": "function", "function": {"name": "x", "arguments": "{}"},
+                             "extra_content": {"google": {"thought_signature": "S"}}}]}]
+    same = prepare_messages(hist, "model-a")[0]
+    other = prepare_messages(hist, "model-b")[0]
+    dummy = prepare_messages(hist, "model-b", dummy_signatures=True)[0]
+    assert same["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "S" and "_by" not in same
+    assert "extra_content" not in other["tool_calls"][0]
+    assert dummy["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "skip_thought_signature_validator"
+
+
+@pytest.mark.asyncio
+async def test_fallback_skips_models_that_cannot_take_the_request_and_reports_when_all_fail(monkeypatch):
+    from worker.llm import fallback
+    from worker.llm.fallback import FallbackClient
+    from worker.llm.openai_compat import QuotaExhausted
+    monkeypatch.setattr(fallback, "_EXHAUSTED", {})
+    too_big = {"error": {"message": "Request too large for model: tokens per minute (TPM): Limit 8000, Requested 15000",
+                         "type": "tokens", "code": "rate_limit_exceeded"}}
+    a = MockAPI([(413, too_big)])
+    b = MockAPI([(429, DAILY_429)])
+    llm = FallbackClient([_client(a, monkeypatch, "small"), _client(b, monkeypatch, "spent")])
+    with pytest.raises(QuotaExhausted, match="request too large.*quota used up"):
+        await llm.conversation("S", []).send(user_text="x")
+
+
+def test_default_chain_uses_other_gemini_models(monkeypatch):
+    from worker.config import get_settings
+    from worker.llm import make_llm
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    llm = make_llm(get_settings(llm_provider="gemini", model="gemini-3.5-flash-lite", llm_fallbacks=""))
+    assert llm.chain()[0] == "gemini:gemini-3.5-flash-lite" and len(llm.chain()) >= 2
+    llm = make_llm(get_settings(llm_provider="gemini", model="m", llm_fallbacks="mistral,none"))
+    assert type(llm).__name__ == "OpenAICompatClient"       # mistral skipped (no key) -> single model
+    monkeypatch.setenv("MISTRAL_API_KEY", "k2")
+    llm = make_llm(get_settings(llm_provider="gemini", model="m", llm_fallbacks="mistral"))
+    assert llm.chain() == ["gemini:m", "mistral:mistral-small-latest"]

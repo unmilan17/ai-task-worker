@@ -44,6 +44,9 @@ class Settings:
     llm_tpm: int = field(default_factory=lambda: int(os.getenv("LLM_TPM", "0")))
     # Override the provider's API base URL (e.g. a self-hosted OpenAI-compatible server).
     llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "").strip())
+    # Fallback chain used when the primary model's quota is used up: "provider:model,provider:model,...".
+    # Empty = the provider's default chain (DEFAULT_FALLBACKS); "none" = no fallbacks.
+    llm_fallbacks: str = field(default_factory=lambda: os.getenv("LLM_FALLBACKS", "").strip())
     # Server-side refusal fallback (Anthropic only). Lets the API re-run a declined
     # request on a fallback model instead of failing the step.
     refusal_fallback: bool = field(default_factory=lambda: _bool("ANTHROPIC_REFUSAL_FALLBACK", True))
@@ -86,10 +89,20 @@ class Settings:
 DEFAULT_MODELS = {
     "gemini": "gemini-3.5-flash-lite",   # free tier: gemini-3.8-flash allows only 20 requests/day
     "groq": "openai/gpt-oss-120b",
+    "mistral": "mistral-small-latest",
+    "cerebras": "gpt-oss-120b",
     "openrouter": "",            # pick a ":free" model on openrouter.ai and set LLM_MODEL
     "ollama": "qwen3:14b",
     "openai": "gpt-5-mini",
     "anthropic": "claude-opus-5-5",
+}
+
+
+# Free Gemini models each have their own daily quota, so by default the chain moves through other Gemini
+# models (same key). Providers with a key in .env (MISTRAL_API_KEY, OPENROUTER_API_KEY + model...) can be added
+# with LLM_FALLBACKS.
+DEFAULT_FALLBACKS = {
+    "gemini": "gemini:gemini-3.1-flash-lite,gemini:gemini-2.5-flash,gemini:gemini-3-flash-preview",
 }
 
 

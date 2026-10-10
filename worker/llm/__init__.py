@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 
-from ..config import Settings
+from ..config import DEFAULT_MODELS, Settings
 from .base import LLMClient
 
 
@@ -32,6 +32,20 @@ def make_llm(settings: Settings) -> LLMClient:
     if provider == "anthropic":
         from .anthropic_client import AnthropicClient
         return AnthropicClient(settings.model, effort=settings.effort, refusal_fallback=settings.refusal_fallback)
-    from .openai_compat import OpenAICompatClient
-    return OpenAICompatClient(provider, settings.model, effort=settings.effort, rpm=settings.llm_rpm,
-                              tpm=settings.llm_tpm, base_url=settings.llm_base_url or None)
+    from ..config import DEFAULT_FALLBACKS
+    from .fallback import FallbackClient, parse_chain
+    from .openai_compat import PRESETS, OpenAICompatClient
+
+    primary = OpenAICompatClient(provider, settings.model, effort=settings.effort, rpm=settings.llm_rpm,
+                                 tpm=settings.llm_tpm, base_url=settings.llm_base_url or None)
+    spec = settings.llm_fallbacks or DEFAULT_FALLBACKS.get(provider, "")
+    clients = [primary]
+    for fb_provider, fb_model in parse_chain(spec):
+        preset = PRESETS.get(fb_provider)
+        if preset is None or (preset.key_env and not os.getenv(preset.key_env)):
+            continue                                   # unknown provider or no key: skip silently
+        model = fb_model or DEFAULT_MODELS.get(fb_provider, "")
+        if not model or (fb_provider, model) in {(c.provider, c.model) for c in clients}:
+            continue
+        clients.append(OpenAICompatClient(fb_provider, model, effort=settings.effort))
+    return clients[0] if len(clients) == 1 else FallbackClient(clients)

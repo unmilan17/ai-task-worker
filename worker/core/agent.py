@@ -83,6 +83,9 @@ class Agent:
         self._loop: ToolLoop | None = None
         self._pending: list = []
         self._environment: str | None = None
+        if hasattr(llm, "on_switch"):  # fallback chain: record which model took over and why
+            llm.on_switch = lambda old, new, why: self.events.emit("model_switch", step=self.ctx.step,
+                                                                    from_model=old, to_model=new, reason=why[:300])
         if hasattr(llm, "on_wait"):   # free-tier rate limiting: show waits in the CLI/UI instead of silence
             llm.on_wait = lambda s: self.events.emit("rate_limit_wait", step=self.ctx.step, seconds=round(s, 1))
 

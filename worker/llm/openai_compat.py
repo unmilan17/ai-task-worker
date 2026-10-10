@@ -64,10 +64,20 @@ PRESETS: dict[str, Preset] = {
     "gemini": Preset("https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY",
                      rpm=15, tpm=200_000, reasoning_effort=True, vision=True,
                      signup="https://aistudio.google.com/apikey"),
-    # Free tier, no card, very fast - but small tokens-per-minute limits (see docs).
+    # Free tier, no card, very fast - but about 8,000 tokens/minute and 200k tokens/day per model (2026-10).
+    # A typical agent request is 12-19k tokens, so Groq's free tier usually rejects it as "too large";
+    # the fallback chain then moves on to the next model.
     "groq": Preset("https://api.groq.com/openai/v1", "GROQ_API_KEY",
                    rpm=25, tpm=8_000, reasoning_effort=True, vision=False,
                    signup="https://console.groq.com/keys"),
+    # Mistral "Experiment" plan: free monthly credit, limits shown in the Mistral console; tool calling supported.
+    "mistral": Preset("https://api.mistral.ai/v1", "MISTRAL_API_KEY",
+                      rpm=30, tpm=0, reasoning_effort=False, vision=False,
+                      signup="https://console.mistral.ai/api-keys"),
+    # Cerebras: a one-off trial credit (needs a card since 2026-07); fast gpt-oss-120b.
+    "cerebras": Preset("https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
+                       rpm=5, tpm=30_000, reasoning_effort=True, vision=False,
+                       signup="https://cloud.cerebras.ai"),
     # Many ":free" models; low daily limits on free accounts.
     "openrouter": Preset("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
                          rpm=15, tpm=0, reasoning_effort=False, vision=False,
@@ -208,6 +218,39 @@ def parse_quota_error(body: Any, message: str = "") -> QuotaError:
     return QuotaError(daily=daily, retry_after=retry_after, limit=limit, metric=metric or "rate limit")
 
 
+class QuotaExhausted(LLMError):
+    """A daily (or otherwise long) quota is used up for this model: retrying today is pointless."""
+
+
+class RequestTooLarge(LLMError):
+    """This model's limits cannot fit the request at all (e.g. a free tier's tokens-per-minute cap)."""
+
+
+DUMMY_SIGNATURE = {"google": {"thought_signature": "skip_thought_signature_validator"}}
+
+
+def prepare_messages(messages: list[dict[str, Any]], model: str, dummy_signatures: bool = False) -> list[dict[str, Any]]:
+    """Copy of the history for sending to `model`.
+
+    Stored assistant turns carry `_by` (the model that produced them) and possibly provider extras such as
+    Gemini's thought signatures. Extras are only valid for the model that produced them, so they are dropped
+    for any other model (the fallback chain may switch models mid-run). With `dummy_signatures`, foreign tool
+    calls get Gemini's documented placeholder signature instead (a retry path if a model insists on one)."""
+    out = []
+    for m in messages:
+        by = m.get("_by")
+        m2 = {k: v for k, v in m.items() if k != "_by"}
+        if by and by != model:
+            m2.pop("extra_content", None)
+            if m2.get("tool_calls"):
+                calls = [{k: v for k, v in tc.items() if k != "extra_content"} for tc in m2["tool_calls"]]
+                if dummy_signatures:
+                    calls = [{**tc, "extra_content": DUMMY_SIGNATURE} for tc in calls]
+                m2["tool_calls"] = calls
+        out.append(m2)
+    return out
+
+
 def _estimate_tokens(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> int:
     return int(len(json.dumps(messages, default=str)) / 3.5 + len(json.dumps(tools or [])) / 3.5) + 500
 
@@ -236,6 +279,7 @@ class OpenAICompatClient(LLMClient):
         self.limiter = RateLimiter(rpm or self.preset.rpm, tpm or self.preset.tpm)
         self.max_tokens = max_tokens
         self.on_wait: Callable[[float], None] | None = None   # set by the Agent to surface waits in the UI
+        self.last_model = model                                  # which model produced the latest reply
 
     def conversation(self, system: str, tools: list[dict[str, Any]], purpose: str = "executor") -> Conversation:
         return _CompatConversation(self, system, tools)
@@ -244,7 +288,8 @@ class OpenAICompatClient(LLMClient):
         if self.key_missing:
             raise LLMError(f"No API key for '{self.provider}': set {self.preset.key_env} in .env "
                            f"(get a free key at {self.preset.signup}).")
-        kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "max_tokens": self.max_tokens}
+        kwargs: dict[str, Any] = {"model": self.model, "messages": prepare_messages(messages, self.model),
+                                  "max_tokens": self.max_tokens}
         if tools:
             kwargs["tools"] = tools
         if self.preset.reasoning_effort and self.effort in {"low", "medium", "high"}:
@@ -258,7 +303,7 @@ class OpenAICompatClient(LLMClient):
             except self._openai.RateLimitError as e:
                 q = parse_quota_error(e.body, str(e))
                 if q.daily:
-                    raise LLMError(
+                    raise QuotaExhausted(
                         f"{self.provider}: the daily free-tier quota for {self.model} is used up ({q.metric}"
                         f"{f', limit {q.limit}' if q.limit else ''}). Daily quotas reset after 24 h (Gemini: "
                         f"midnight Pacific time). Each model has its own quota, so you can set LLM_MODEL to "
@@ -275,11 +320,25 @@ class OpenAICompatClient(LLMClient):
             except self._openai.AuthenticationError as e:
                 raise LLMError(f"{self.provider} rejected the API key ({self.preset.key_env}): {e}") from e
             except self._openai.BadRequestError as e:
+                if "signature" in str(e).lower():
+                    # A model switch left tool calls without this model's reasoning signature: retry once with
+                    # Gemini's documented placeholder signature (a second failure is raised, not retried).
+                    kwargs["messages"] = prepare_messages(messages, self.model, dummy_signatures=True)
+                    try:
+                        resp = await self.client.chat.completions.create(**kwargs)
+                        break
+                    except self._openai.APIError as e2:
+                        raise LLMError(f"{self.provider} rejected the request: {e2}") from e2
+                if _too_large(e):
+                    raise RequestTooLarge(f"{self.provider}:{self.model} cannot take a request this large: {e}") from e
                 raise LLMError(f"{self.provider} rejected the request: {e}") from e
             except self._openai.APIConnectionError as e:
                 raise LLMError(f"Could not reach {self.provider} at {self.client.base_url}: {e}") from e
             except self._openai.APIStatusError as e:
+                if e.status_code == 413 or _too_large(e):
+                    raise RequestTooLarge(f"{self.provider}:{self.model} cannot take a request this large: {e}") from e
                 raise LLMError(f"{self.provider} API error {e.status_code}: {e}") from e
+        self.last_model = self.model
         usage = self._account(resp)
         RateLimiter.record(entry, usage.input_tokens + usage.output_tokens)
         if not resp.choices:
@@ -313,6 +372,11 @@ class OpenAICompatClient(LLMClient):
         raise LLMError(f"Model did not return a valid {schema.__name__}: {last_error}")
 
 
+def _too_large(e: Exception) -> bool:
+    return bool(re.search(r"request too large|too many tokens|context length|maximum context|reduce the length",
+                          str(e), re.I))
+
+
 class _CompatConversation(Conversation):
     def __init__(self, llm: OpenAICompatClient, system: str, tools: list[dict[str, Any]]) -> None:
         self.llm = llm
@@ -344,7 +408,8 @@ class _CompatConversation(Conversation):
         msg = choice.message
 
         # Store the assistant turn as returned (append-only), keeping provider extras on tool calls.
-        stored: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
+        # `_by` records which model wrote this turn (stripped before sending; see prepare_messages).
+        stored: dict[str, Any] = {"role": "assistant", "content": msg.content or "", "_by": self.llm.last_model}
         turn = AssistantTurn(text=(msg.content or "").strip(), stop_reason=choice.finish_reason or "", usage=usage)
         reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None)
         if isinstance(reasoning, str):

@@ -154,6 +154,7 @@ def run_case(case: dict, defaults: dict, headed: bool) -> dict[str, Any]:
             "status": final["status"], "summary": final["summary"], "run_ids": [d.name for d in dirs],
             "steps": sum(r["metrics"]["tool_steps"] for r in reports[-1:]),
             "llm_calls": sum(r["metrics"]["llm_calls"] for r in reports),
+            "models": sorted({m for r in reports for m in r["metrics"].get("models_used") or [r["metrics"]["model"]]}),
             "duration_s": round(time.time() - t0, 1)}
 
 
@@ -178,9 +179,10 @@ def _scorecard(results: list[dict], spec: dict) -> dict[str, tuple[int, int]]:
 
 
 def to_markdown(results: list[dict], cases: dict, model: str) -> str:
-    lines = [f"Model: `{model}` · profile `centralign` · {datetime.now():%Y-%m-%d %H:%M}", "",
-             "| Case | Runs passed | Verdicts | Status (last) | Steps | Time (s) | Failed checks (last run) |",
-             "|---|---|---|---|---|---|---|"]
+    lines = [f"Primary model: `{model}` (fallback chain on quota exhaustion) · profile `centralign` · "
+             f"{datetime.now():%Y-%m-%d %H:%M}", "",
+             "| Case | Runs passed | Verdicts | Status (last) | Model(s) | Steps | Time (s) | Failed checks (last run) |",
+             "|---|---|---|---|---|---|---|---|"]
     grouped: dict[str, list[dict]] = defaultdict(list)
     for r in results:
         grouped[r["id"]].append(r)
@@ -190,7 +192,8 @@ def to_markdown(results: list[dict], cases: dict, model: str) -> str:
         last = runs[-1]
         failed = "; ".join(f"{c['name']}: {c['detail']}" for c in last.get("checks", [])
                            if not c["passed"] and not c.get("tag"))[:220]
-        lines.append(f"| {cid} | {passed}/{len(runs)} | {verdicts} | {last.get('status')} | {last.get('steps')} | "
+        models = ", ".join(sorted({m for r in runs for m in r.get("models", [])})) or "-"
+        lines.append(f"| {cid} | {passed}/{len(runs)} | {verdicts} | {last.get('status')} | {models} | {last.get('steps')} | "
                      f"{last.get('duration_s')} | {failed} |")
     tagged = defaultdict(list)
     for r in results:

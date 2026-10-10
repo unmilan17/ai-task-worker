@@ -138,7 +138,18 @@ Switch with two lines in `.env`:
 | `groq` | `GROQ_API_KEY` ([console](https://console.groq.com/keys), free) | `openai/gpt-oss-120b` | Very fast, but small tokens-per-minute limits on the free tier, so long agent runs are throttled. |
 | `openrouter` | `OPENROUTER_API_KEY` ([openrouter.ai](https://openrouter.ai/keys)) | set `LLM_MODEL` to a `:free` model | Low daily request caps on free accounts. |
 | `ollama` | none | `qwen3:14b` | Fully local and unlimited, but needs a capable GPU. Small models are weaker at long multi-step tool use. |
+| `mistral` | `MISTRAL_API_KEY` ([console](https://console.mistral.ai/api-keys)) | `mistral-small-latest` | Free "Experiment" plan with a monthly credit; limits are shown in the console. Tool calling supported. |
+| `cerebras` | `CEREBRAS_API_KEY` | `gpt-oss-120b` | Now a one-off trial credit that needs a card. |
 | `openai` / `anthropic` | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `gpt-5-mini` / `claude-opus-5-5` | Paid. |
+
+**Fallback chain.** Free quotas are per model and per day, so the worker keeps a chain: when the current model's
+daily quota is used up (or a model can't take a request this large), the next one takes over, mid-run if needed.
+By default the chain is other Gemini models on the same key (`gemini-3.1-flash-lite`, `gemini-2.5-flash`,
+`gemini-3-flash-preview`); `LLM_FALLBACKS` adds providers you have keys for, e.g.
+`LLM_FALLBACKS=gemini:gemini-3.1-flash-lite,gemini:gemini-2.5-flash,mistral`. Switches show up in the timeline and
+the report, which lists the models that did the work. (An agent request here is about 12-19k tokens and a task about
+380k tokens, so Groq's free tier, about 8k tokens per minute and 200k per day, is too small for this agent. It stays
+usable for small tasks, and the chain skips it when a request doesn't fit.)
 
 Free tiers limit requests and tokens per minute. The adapter spaces requests to stay under them
 (`LLM_RPM` / `LLM_TPM` override the presets), shows "waiting for rate limit" in the UI, waits out a

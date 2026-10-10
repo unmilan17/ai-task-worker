@@ -83,6 +83,7 @@ def build_report(*, run_id: str, run_dir: Path, task: str, status: str, status_r
         "video": _rel(str(videos[-1]), run_dir) if videos else None,
         "metrics": {
             "model": model,
+            "models_used": list(getattr(llm, "models_used", []) or [model]),
             "tool_steps": ctx.step,
             "llm_calls": llm.usage.calls,
             "input_tokens": llm.usage.input_tokens,

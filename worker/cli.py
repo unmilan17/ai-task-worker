@@ -92,6 +92,8 @@ def print_event(ev) -> None:
         console.print(f"  [red]⚡ circuit breaker opened for {d['host']} - the system looks down[/]")
     elif t == "turn_started":
         console.rule(f"[bold]FOLLOW-UP (turn {d.get('turn')})[/]")
+    elif t == "model_switch":
+        console.print(f"  [yellow]⇄ model switch: {d['from_model']} → {d['to_model']} ({d['reason'][:120]})[/]")
     elif t == "rate_limit_wait":
         console.print(f"  [dim]⏳ waiting {d['seconds']}s for the free-tier rate limit[/]")
     elif t == "error":

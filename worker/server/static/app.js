@@ -192,6 +192,7 @@ function handle(ev, live) {
     case "write_review":
       if (d.result !== "ok") add(`🛡 Pre-write review (${esc(d.result)}): ${esc(d.detail)}`, d.result === "unsourced" ? "block" : "reflect");
       break;
+    case "model_switch": add(`⇄ Model switch: ${esc(d.from_model)} → ${esc(d.to_model)} (${esc(d.reason)})`, "retry"); break;
     case "circuit_open": add(`⚡ Circuit breaker opened for ${esc(d.host)}: the system looks down, no more calls to it`, "block"); break;
     case "turn_started":
       setStatus("running"); setPhase("understand");

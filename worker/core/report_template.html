@@ -28,7 +28,7 @@
 
 <div class="card">
   <h1>AI Task Worker &mdash; run report</h1>
-  <p class="muted">Run {{ r.run_id }} &middot; model {{ r.metrics.model }} &middot; {{ r.metrics.duration_s }} s &middot;
+  <p class="muted">Run {{ r.run_id }} &middot; model {{ (r.metrics.models_used or [r.metrics.model]) | join(" → ") }} &middot; {{ r.metrics.duration_s }} s &middot;
      {{ r.metrics.tool_steps }} tool steps &middot; {{ r.metrics.llm_calls }} LLM calls &middot; ~${{ r.metrics.cost_usd }}</p>
   <p><b>Task:</b> {{ r.task }}</p>
   <p><span class="status {{ r.status }}">{{ r.status | upper }}</span>
