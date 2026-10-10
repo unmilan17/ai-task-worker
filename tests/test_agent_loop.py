@@ -25,6 +25,16 @@ def bills_for(invoice_number: str) -> list[dict]:
         return [dict(r) for r in db.execute("SELECT * FROM bills WHERE invoice_number=?", (invoice_number,))]
 
 
+def lookup_globex_steps():
+    """What a real agent does before an API write: read the vendor list and record the invoice values."""
+    return [
+        turn(call("http_request", method="GET", url=f"{s.ERP}/api/vendors", headers=s.API_KEY_HEADER)),
+        turn(call("remember", key="invoice.issue_date", value=ISSUED, source="SupplierHub GLX-2231"),
+             call("remember", key="invoice.due_date", value=DUE, source="SupplierHub GLX-2231"),
+             call("remember", key="invoice.total", value="18,250.00", source="SupplierHub GLX-2231")),
+    ]
+
+
 def headline_executor_script(extra_before_finish=None):
     return [
         turn(call("update_plan", steps=[{"id": 1, "title": "Find invoice", "status": "in_progress"}]),
@@ -71,6 +81,7 @@ async def test_high_value_write_requires_approval_and_rejection_is_respected(fre
             "due_date": DUE, "amount": "18250.00", "currency": "USD"}
     llm = ScriptedLLM(
         scripts={"executor": [
+            *lookup_globex_steps(),
             turn(call("http_request", method="POST", url=f"{s.ERP}/api/bills", headers=s.API_KEY_HEADER, json_body=body)),
             s.finish("blocked", "The user declined the 18,250.00 USD bill, so nothing was entered."),
         ]},
@@ -91,6 +102,7 @@ async def test_approved_high_value_write_goes_through(fresh_sandbox, settings):
             "due_date": DUE, "amount": "18250.00", "currency": "USD"}
     llm = ScriptedLLM(
         scripts={"executor": [
+            *lookup_globex_steps(),
             turn(call("http_request", method="POST", url=f"{s.ERP}/api/bills", headers=s.API_KEY_HEADER, json_body=body)),
             s.finish(),
         ], "verifier": [s.verdict(True)]},
@@ -181,3 +193,55 @@ async def test_out_of_scope_request_is_refused_without_acting(fresh_sandbox, set
     report = await Agent(llm, settings, ScriptedHumanChannel()).run("Book me a flight to Paris")
     assert report["status"] == "blocked"
     assert report["metrics"]["tool_steps"] == 0
+
+
+@pytest.mark.asyncio
+async def test_unsourced_value_is_blocked_before_writing(fresh_sandbox, settings):
+    """Pre-write provenance check: a due date the agent never read (or computed with a tool) is not written."""
+    invented = (TODAY + timedelta(days=45)).isoformat()
+    body = {"vendor_id": "V-002", "invoice_number": "GLX-2231", "invoice_date": ISSUED,
+            "due_date": invented, "amount": "18250.00", "currency": "USD"}
+    llm = ScriptedLLM(
+        scripts={"executor": [
+            *lookup_globex_steps(),
+            turn(call("http_request", method="POST", url=f"{s.ERP}/api/bills", headers=s.API_KEY_HEADER, json_body=body)),
+            s.finish("failed", "Could not determine the due date."),
+        ]},
+        structured_responses={"TaskSpec": s.spec()})
+    human = ScriptedHumanChannel(approve=True)
+    report = await Agent(llm, settings, human).run("Enter Globex invoice GLX-2231 into the ERP")
+    assert bills_for("GLX-2231") == []
+    assert human.log == []                                    # blocked before even asking for approval
+    assert report["reliability"]["tool_failures_by_kind"].get("unsourced_value") == 1
+    assert any(r["result"] == "unsourced" and invented in r["detail"] for r in report["write_reviews"])
+
+
+@pytest.mark.asyncio
+async def test_ambiguity_review_asks_the_user_and_holds_the_write(fresh_sandbox, settings):
+    """The (scripted) reviewer flags two equally plausible candidates: the system asks the user,
+    nothing is written until the agent retries with the answer."""
+    from worker.safety.review import WriteReview
+
+    reviews = iter([WriteReview(ambiguous=True, kind="multiple_candidates", candidates=["INIT-551", "INIT-552"],
+                                question="Two Initech invoices share the latest date. Which one?",
+                                explanation="two invoices dated the same day"),
+                    WriteReview.scripted_default()])
+    body = {"vendor_id": "V-003", "invoice_number": "INIT-552", "invoice_date": (TODAY - timedelta(days=4)).isoformat(),
+            "due_date": (TODAY + timedelta(days=26)).isoformat(), "amount": "6730.00", "currency": "USD"}
+    post = turn(call("http_request", method="POST", url=f"{s.ERP}/api/bills", headers=s.API_KEY_HEADER, json_body=body))
+    llm = ScriptedLLM(
+        scripts={"executor": [
+            turn(call("http_request", method="GET", url=f"{s.ERP}/api/vendors", headers=s.API_KEY_HEADER)),
+            turn(call("remember", key="inv.issue", value=body["invoice_date"], source="portal"),
+                 call("remember", key="inv.due", value=body["due_date"], source="portal"),
+                 call("remember", key="inv.total", value="6,730.00", source="portal"),
+                 call("remember", key="inv.number", value="INIT-552", source="portal")),
+            post, post, s.finish()],
+            "verifier": [s.verdict(True)]},
+        structured_responses={"TaskSpec": s.spec(), "WriteReview": lambda prompt: next(reviews)})
+    human = ScriptedHumanChannel(answers=[(r"Initech", "INIT-552")])
+    report = await Agent(llm, settings, human).run("Put the latest Initech invoice into the ERP")
+    assert [r[0].kind for r in human.log] == ["clarification"]
+    assert human.log[0][1].answer == "INIT-552"
+    assert len(bills_for("INIT-552")) == 1 and bills_for("INIT-551") == []
+    assert report["reliability"]["tool_failures_by_kind"].get("needs_user_input") == 1

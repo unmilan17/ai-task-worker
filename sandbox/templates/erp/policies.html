@@ -1,0 +1,6 @@
+{% extends "erp/base.html" %}
+{% block title %}Company policies{% endblock %}
+{% block content %}
+<h2>Company policies (Finance)</h2>
+<ul>{% for p in policies %}<li>{{ p }}</li>{% endfor %}</ul>
+{% endblock %}

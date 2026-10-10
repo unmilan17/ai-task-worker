@@ -109,3 +109,18 @@ repeated runs does.
 ### Chaos testing / fault injection
 Deliberately making systems fail (errors, slowness, broken features) to test that the software copes.
 Here: `CHAOS=mild|hard` in the sandbox.
+
+
+### Provenance check
+Before writing, check that each value can be traced to a source the worker actually saw or computed. It is the
+difference between "the due date is 2026-10-05 (computed from Net 30 on the invoice)" and "the due date is
+2026-10-05 (made up)".
+
+### Circuit breaker
+A pattern from distributed systems: after repeated failures, stop calling the failing service for a while
+("open the circuit") instead of hammering it, then try one call later ("half-open").
+
+### False success vs. honest failure
+An agent that fails and *says so* is annoying but safe. An agent that fails and says "done" (false success), or
+changes the wrong data (silent damage), is dangerous. Good evaluation measures these separately, from the real
+system state.

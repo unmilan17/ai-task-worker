@@ -1,0 +1,12 @@
+{% extends "helpdesk/base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<h2>Agent sign-in</h2>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<form method="post" action="/login">
+  <input type="hidden" name="next" value="{{ next }}">
+  <label for="username">Agent login</label><input id="username" name="username">
+  <label for="password">Password</label><input id="password" name="password" type="password">
+  <p><button type="submit">Sign in</button></p>
+</form>
+{% endblock %}

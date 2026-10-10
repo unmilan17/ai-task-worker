@@ -21,6 +21,14 @@ def _bool(name: str, default: bool) -> bool:
     return default if v is None else v.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _profile_file(profile: str, name: str, env_var: str) -> Path:
+    """config/<name> for the default profile, config/<profile>/<name> for others (env var overrides)."""
+    if os.getenv(env_var):
+        return Path(os.environ[env_var])
+    profile = (profile or "northwind").strip().lower()
+    return PROJECT_ROOT / "config" / (name if profile == "northwind" else f"{profile}/{name}")
+
+
 @dataclass
 class Settings:
     # ---- LLM -------------------------------------------------------------
@@ -46,6 +54,9 @@ class Settings:
     max_cost_usd: float = field(default_factory=lambda: float(os.getenv("MAX_COST_USD", "5")))
     max_verify_rounds: int = field(default_factory=lambda: int(os.getenv("MAX_VERIFY_ROUNDS", "2")))
     max_tool_retries: int = field(default_factory=lambda: int(os.getenv("MAX_TOOL_RETRIES", "2")))
+    # Pre-write review (safety/review.py): provenance check (deterministic) and ambiguity review (LLM).
+    provenance_check: bool = field(default_factory=lambda: _bool("PROVENANCE_CHECK", True))
+    ambiguity_review: bool = field(default_factory=lambda: _bool("AMBIGUITY_REVIEW", True))
     human_timeout_s: float = field(default_factory=lambda: float(os.getenv("HUMAN_TIMEOUT_S", "900")))
 
     # ---- browser ---------------------------------------------------------
@@ -57,10 +68,15 @@ class Settings:
     # ---- paths -----------------------------------------------------------
     runs_dir: Path = field(default_factory=lambda: Path(os.getenv("RUNS_DIR", PROJECT_ROOT / "runs")))
     workspace_dir: Path = field(default_factory=lambda: Path(os.getenv("WORKSPACE_DIR", PROJECT_ROOT / "workspace")))
-    environment_file: Path = field(default_factory=lambda: Path(
-        os.getenv("ENVIRONMENT_FILE", PROJECT_ROOT / "config" / "environment.yaml")))
-    policy_file: Path = field(default_factory=lambda: Path(
-        os.getenv("POLICY_FILE", PROJECT_ROOT / "config" / "policy.yaml")))
+    # Profile = which workplace the worker is onboarded to: "northwind" (default) or "centralign" (test-suite
+    # fixtures). It selects the onboarding document, the policy and the dashboard samples.
+    profile: str = field(default_factory=lambda: os.getenv("PROFILE", "northwind").strip().lower())
+    environment_file: Path = field(default_factory=lambda: _profile_file(os.getenv("PROFILE", "northwind"),
+                                                                         "environment.yaml", "ENVIRONMENT_FILE"))
+    policy_file: Path = field(default_factory=lambda: _profile_file(os.getenv("PROFILE", "northwind"),
+                                                                    "policy.yaml", "POLICY_FILE"))
+    samples_file: Path = field(default_factory=lambda: _profile_file(os.getenv("PROFILE", "northwind"),
+                                                                     "samples.yaml", "SAMPLES_FILE"))
     secrets_file: Path = field(default_factory=lambda: Path(
         os.getenv("SECRETS_FILE", PROJECT_ROOT / "sandbox" / "test_credentials.json")))
 
@@ -82,6 +98,12 @@ def get_settings(**overrides) -> Settings:
     for k, v in overrides.items():
         if v is not None:
             setattr(s, k, v)
+    if overrides.get("profile"):
+        for attr, name, env_var in (("environment_file", "environment.yaml", "ENVIRONMENT_FILE"),
+                                    ("policy_file", "policy.yaml", "POLICY_FILE"),
+                                    ("samples_file", "samples.yaml", "SAMPLES_FILE")):
+            if overrides.get(attr) is None:
+                setattr(s, attr, _profile_file(s.profile, name, env_var))
     if not s.model:
         s.model = DEFAULT_MODELS.get(s.llm_provider, "")
     return s

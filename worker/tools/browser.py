@@ -187,7 +187,13 @@ async def _perform_page_action(ctx: RunContext, label: str, action, info: dict |
             await b.page.wait_for_timeout(250)
         except PlaywrightTimeout:
             pass
-    except PlaywrightTimeout:
+    except PlaywrightTimeout as e:
+        if "intercepts pointer events" in str(e):
+            raise ToolError(ErrorKind.INVALID_INPUT,
+                            f"Could not {label}: another element (probably a pop-up or modal dialog) is covering it. "
+                            f"Nothing was clicked.",
+                            "Close the dialog first (look for a 'No thanks' / 'Close' / 'Dismiss' button in a fresh "
+                            "snapshot), then retry.")
         raise ToolError(ErrorKind.TRANSIENT, f"Timed out while trying to {label}.")
     text, snap, shot = await _observe(ctx, label, b.last_status)
     kind = _classify_status(b.last_status)
@@ -267,7 +273,7 @@ class BrowserClick(Tool):
         info = await page.evaluate(_ACTION_INFO_JS, int(args["ref"]))
         await _authorize_click(ctx, info)
         label = f"click {info.get('text') or info.get('tag', 'element')}"
-        return await _perform_page_action(ctx, label, lambda: loc.click(timeout=10000), info)
+        return await _perform_page_action(ctx, label, lambda: loc.click(timeout=6000), info)
 
 
 async def _authorize_click(ctx: RunContext, info: dict | None) -> None:

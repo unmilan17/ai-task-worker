@@ -10,6 +10,7 @@ from __future__ import annotations
 from .agent_tools import AGENT_TOOLS, SubmitVerdict
 from .base import Tool
 from .browser import BROWSER_TOOLS
+from .data_tools import DATA_TOOLS
 from .files import FILE_TOOLS
 from .http_api import HTTP_TOOLS
 
@@ -29,11 +30,11 @@ class ToolRegistry:
 
 
 def executor_registry() -> ToolRegistry:
-    return ToolRegistry([cls() for cls in [*BROWSER_TOOLS, *FILE_TOOLS, *HTTP_TOOLS, *AGENT_TOOLS]])
+    return ToolRegistry([cls() for cls in [*BROWSER_TOOLS, *FILE_TOOLS, *HTTP_TOOLS, *DATA_TOOLS, *AGENT_TOOLS]])
 
 
 def verifier_registry() -> ToolRegistry:
     """Read-oriented subset for the verifier (writes are additionally blocked by the Guard)."""
-    tools = [cls() for cls in [*BROWSER_TOOLS, *FILE_TOOLS, *HTTP_TOOLS, *AGENT_TOOLS]]
+    tools = [cls() for cls in [*BROWSER_TOOLS, *FILE_TOOLS, *HTTP_TOOLS, *DATA_TOOLS, *AGENT_TOOLS]]
     tools = [t for t in tools if t.verifier_allowed and t.name not in {"file_write", "update_plan", "remember"}]
     return ToolRegistry([*tools, SubmitVerdict()])

@@ -1,0 +1,8 @@
+{% extends "erp/base.html" %}
+{% block title %}{{ bill_id }}{% endblock %}
+{% block content %}
+<div class="flash" role="status">Bill {{ bill_id }} was created successfully and is pending approval.</div>
+<h2>Bill {{ bill_id }}</h2>
+<p class="hint">The bill details are being processed and will appear in the bill list shortly.</p>
+<p><a href="/bills">&larr; All bills</a></p>
+{% endblock %}

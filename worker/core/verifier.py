@@ -48,20 +48,26 @@ def user_decisions(ctx: RunContext) -> str:
     return "\n".join(lines) or "(none)"
 
 
-def rule_check(spec: TaskSpec, claim: dict[str, Any], ctx: RunContext) -> dict[str, Any] | None:
+def rule_check(spec: TaskSpec, claim: dict[str, Any], actions: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Cheap deterministic checks. Returns a failed verdict, or None if nothing is wrong."""
-    if spec.changes_data and not ctx.actions:
+    status = claim.get("status")
+    if status == "completed" and spec.changes_data and not actions:
         return {"passed": False, "method": "rule",
                 "summary": "The task requires changing data, but no successful data-changing action was recorded "
                            "during the run.",
                 "criteria": [], "issues": ["No form submission / API write / file write succeeded."]}
+    if status == "no_action_needed" and actions:
+        return {"passed": False, "method": "rule",
+                "summary": "The worker says nothing needed to change, but it did change data.",
+                "criteria": [], "issues": [f"{len(actions)} data-changing action(s) were recorded."]}
     return None
 
 
 async def verify(llm: LLMClient, ctx: RunContext, budget: Budget, task: str, spec: TaskSpec,
-                 claim: dict[str, Any], environment: str) -> dict[str, Any]:
+                 claim: dict[str, Any], environment: str, actions_from: int = 0) -> dict[str, Any]:
     ctx.events.emit("phase", step=ctx.step, phase="verify")
-    failed = rule_check(spec, claim, ctx)
+    turn_actions = ctx.actions[actions_from:]
+    failed = rule_check(spec, claim, turn_actions)
     if failed:
         ctx.events.emit("verification", step=ctx.step, verdict=failed)
         return failed
@@ -69,7 +75,7 @@ async def verify(llm: LLMClient, ctx: RunContext, budget: Budget, task: str, spe
     evidence = "\n".join(f"- {e.get('claim')}: {e.get('proof')}" for e in claim.get("evidence") or []) or "(none)"
     actions = "\n".join(f"- step {a['step']}: {a['description']}" + (f" fields={json.dumps(a.get('fields'))}"
                                                                      if a.get("fields") else "")
-                        for a in ctx.actions) or "(none)"
+                        for a in turn_actions) or "(none)"
     kickoff = fill(VERIFIER_KICKOFF, task=task,
                    criteria="\n".join(f"{i + 1}. {c}" for i, c in enumerate(spec.success_criteria)),
                    status=claim.get("status"), summary=claim.get("summary"), evidence=evidence,

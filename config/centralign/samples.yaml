@@ -1,0 +1,13 @@
+# Sample tasks shown in the dashboard for the "centralign" profile (UI only - the agent never sees this file).
+- label: "A1: latest Acme invoice"
+  task: Find the latest invoice from Acme Corp, extract the amount and due date, enter it into our internal system, and tell me once it is done.
+- label: "F1: ambiguous vendor"
+  task: Log the latest Acme invoice.
+- label: "F4: needs approval"
+  task: Log Stark Supplies' latest invoice.
+- label: "A3: scanned invoice"
+  task: Log Globex Ltd's latest invoice.
+- label: "G2: onboard vendor"
+  task: Add the new vendor from the onboarding email.
+- label: "G6: helpdesk"
+  task: Set the priority of the login-failure ticket to High.

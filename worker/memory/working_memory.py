@@ -2,15 +2,15 @@
 
 Facts are written explicitly by the agent through the ``remember`` tool, e.g.
 
-    remember(key="acme_latest_invoice.total", value="4812.75",
-             source="SupplierHub invoice page INV-ACME-1102 (Total due)")
+    remember(key="invoice.total", value="1234.50",
+             source="supplier portal, invoice detail page (Total due)")
 
 Why explicit facts instead of "the model will remember it from the chat"?
 
 * The facts survive context growth: they are listed again in every
   verification prompt and in the final report.
 * Each fact records *where it came from* (source + step + URL), which is what
-  makes the final summary auditable ("4,812.75 - read from the invoice page at
+  makes the final summary auditable ("1,234.50 - read from the invoice page at
   step 9, screenshot attached").
 * The verifier can compare the claimed facts against the real systems.
 

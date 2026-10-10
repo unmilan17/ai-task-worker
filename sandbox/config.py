@@ -6,6 +6,7 @@ fictional company *Northwind Traders* would use:
 * SupplierHub   - a supplier billing portal where vendors publish invoices to us
 * Northwind ERP - our internal finance system (web UI + REST API)
 * Webmail       - the AP team's shared inbox
+* HelpDesk      - an unrelated IT ticketing app (used to test generalization)
 
 Each one runs as a separate web server on its own port so that, from the
 agent's point of view, they behave like independent systems.
@@ -26,12 +27,15 @@ HOST = os.getenv("SANDBOX_HOST", "127.0.0.1")
 SUPPLIERHUB_PORT = int(os.getenv("SUPPLIERHUB_PORT", "8001"))
 ERP_PORT = int(os.getenv("ERP_PORT", "8002"))
 MAIL_PORT = int(os.getenv("MAIL_PORT", "8003"))
+HELPDESK_PORT = int(os.getenv("HELPDESK_PORT", "8004"))
 
 SUPPLIERHUB_URL = f"http://localhost:{SUPPLIERHUB_PORT}"
 ERP_URL = f"http://localhost:{ERP_PORT}"
 MAIL_URL = f"http://localhost:{MAIL_PORT}"
+HELPDESK_URL = f"http://localhost:{HELPDESK_PORT}"
 
 ERP_DB_PATH = STATE_DIR / "erp.db"
+HELPDESK_DB_PATH = STATE_DIR / "helpdesk.db"
 SEED_MANIFEST_PATH = STATE_DIR / "seed_manifest.json"
 PDF_DIR = STATE_DIR / "pdfs"
 

@@ -1,0 +1,31 @@
+# Hard guardrails for the "centralign" profile (enforced in code by worker/safety/policy.py).
+
+allowed_hosts:
+  - localhost:8001
+  - localhost:8002
+  - localhost:8003
+  - localhost:8004
+  - 127.0.0.1:8001
+  - 127.0.0.1:8002
+  - 127.0.0.1:8003
+  - 127.0.0.1:8004
+
+blocked_path_prefixes:
+  - /__admin
+
+approval_rules:
+  - id: high_value_amount
+    description: Entries above ₹5,00,000 need explicit approval from the user before they are submitted.
+    applies_to: [form_submit, http_write]
+    field_pattern: "(?i)^(amount|total|total_amount|value)$"
+    greater_than: 500000
+
+  - id: destructive_or_payment_action
+    description: Deleting records or initiating payments requires human approval.
+    applies_to: [click, form_submit, http_write]
+    text_pattern: "(?i)\\b(delete|remove|void|pay now|make payment|approve payment|wire|transfer funds|mark(ed)? (as )?paid)\\b"
+
+  - id: http_delete
+    description: HTTP DELETE requests always require human approval.
+    applies_to: [http_write]
+    methods: [DELETE]

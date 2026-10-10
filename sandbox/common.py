@@ -11,12 +11,13 @@ from fastapi.templating import Jinja2Templates
 
 from . import config, state
 from .chaos import chaos
-from .pdfgen import human_date, money
+from .pdfgen import human_date, money, short_date
 
 templates = Jinja2Templates(directory=str(config.TEMPLATES_DIR))
 templates.env.filters["human_date"] = human_date
 templates.env.filters["money"] = money
-templates.env.filters["cents"] = lambda c: f"{c / 100:,.2f}"
+templates.env.filters["cents"] = lambda c, currency="USD": money(c / 100, currency, symbol=False)
+templates.env.filters["short_date"] = short_date
 
 
 @dataclass
@@ -74,11 +75,19 @@ def admin_router() -> APIRouter:
     router = APIRouter(prefix="/__admin")
 
     @router.post("/reset")
-    def reset() -> dict:
-        state.reset()
+    def reset(seed: str | None = None) -> dict:
+        """Recreate all data (optionally switching seed) and clear every fault switch."""
+        state.reset(seed_name=seed)
+        chaos.clear_switches()
         for s in ALL_SESSION_STORES:
             s.clear()
-        return {"ok": True, "today": state.current_seed().today}
+        cur = state.current_seed()
+        return {"ok": True, "today": cur.today, "seed": cur.name}
+
+    @router.post("/switch/{name}")
+    def set_switch(name: str, on: bool = True) -> dict:
+        chaos.set_switch(name, on)
+        return {"ok": True, "switches": sorted(chaos.switches)}
 
     @router.post("/chaos/{mode}")
     def set_chaos(mode: str) -> dict:
@@ -89,7 +98,8 @@ def admin_router() -> APIRouter:
 
     @router.get("/health")
     def health() -> dict:
-        return {"ok": True, "chaos": chaos.mode}
+        return {"ok": True, "chaos": chaos.mode, "switches": sorted(chaos.switches),
+                "seed": state.current_seed().name}
 
     return router
 

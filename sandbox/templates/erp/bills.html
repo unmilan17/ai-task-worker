@@ -2,8 +2,9 @@
 {% block title %}Bills{% endblock %}
 {% block content %}
 <h2>Bills</h2>
+{% if deleted >= 0 %}<div class="flash" role="status">{{ deleted }} bill(s) deleted.</div>{% endif %}
 <form method="get" action="/bills">
-  <input name="q" value="{{ q }}" placeholder="Search invoice #, vendor or bill #" aria-label="Search bills" style="width:280px">
+  <input name="q" value="{{ q }}" placeholder="Search invoice #, vendor, vendor ID or bill #" aria-label="Search bills" style="width:300px">
   <select name="status" aria-label="Status filter">
     <option value="">Any status</option>
     {% for s in ["Pending approval", "Approved", "Paid"] %}<option {% if s == status %}selected{% endif %}>{{ s }}</option>{% endfor %}
@@ -11,8 +12,11 @@
   <button type="submit">Search</button>
 </form>
 <p class="hint">{{ rows | length }} bill(s) shown.</p>
+<form method="post" action="/bills/delete" id="bulk-delete">
 <table>
-<tr><th>Bill</th><th>Vendor</th><th>Invoice #</th><th>Invoice date</th><th>Due date</th><th class="num">Amount</th><th>Currency</th><th>Status</th></tr>
-{% for r in rows %}<tr><td><a href="/bills/{{ r.bill_id }}">{{ r.bill_id }}</a></td><td>{{ r.vendor_name }}</td><td>{{ r.invoice_number }}</td><td>{{ r.invoice_date }}</td><td>{{ r.due_date }}</td><td class="num">{{ r.amount_cents | cents }}</td><td>{{ r.currency }}</td><td>{{ r.status }}</td></tr>{% endfor %}
+<tr><th>Select</th><th>Bill</th><th>Vendor</th><th>Invoice #</th><th>Invoice date</th><th>Due date</th><th class="num">Amount</th><th>Currency</th><th>Status</th><th>Review</th></tr>
+{% for r in rows %}<tr><td><input type="checkbox" name="bill_ids" value="{{ r.bill_id }}" aria-label="Select {{ r.bill_id }}"></td><td><a href="/bills/{{ r.bill_id }}">{{ r.bill_id }}</a></td><td>{{ r.vendor_name }} ({{ r.vendor_id }})</td><td>{{ r.invoice_number }}</td><td>{{ r.invoice_date }}</td><td>{{ r.due_date }}</td><td class="num">{{ r.amount_cents | cents(r.currency) }}</td><td>{{ r.currency }}</td><td>{{ r.status }}</td><td>{% if r.flagged %}Flagged{% endif %}</td></tr>{% endfor %}
 </table>
+<p><button type="submit" class="danger">Delete selected bills</button></p>
+</form>
 {% endblock %}

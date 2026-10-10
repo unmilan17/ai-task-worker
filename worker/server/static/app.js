@@ -15,11 +15,18 @@ async function boot() {
   $("keywarn").classList.toggle("hidden", cfg.api_key_present);
   if (cfg.api_key_message) $("keywarn").textContent = `${cfg.api_key_message} Then restart the server.`;
   if (cfg.chaos) $("chaos").value = cfg.chaos;
+  $("fault").insertAdjacentHTML("beforeend", (cfg.all_switches || []).map((s) => `<option value="${s}">${s}</option>`).join(""));
+  if (cfg.switches && cfg.switches.length) $("fault").value = cfg.switches[0];
+  $("model").textContent = `${cfg.provider} · ${cfg.model} · ${cfg.profile || "northwind"}`;
+  $("fault").onchange = async () => {
+    for (const s of cfg.all_switches || []) await fetch(`/api/sandbox/switch/${s}?on=false`, { method: "POST" });
+    if ($("fault").value) await fetch(`/api/sandbox/switch/${$("fault").value}?on=true`, { method: "POST" });
+  };
   $("samples").innerHTML = cfg.samples.map((s, i) => `<button data-i="${i}" title="${esc(s.task)}">${esc(s.label)}</button>`).join("");
   $("samples").onclick = (e) => { const b = e.target.closest("button"); if (b) $("task").value = cfg.samples[b.dataset.i].task; };
   $("run").onclick = startRun;
   $("chaos").onchange = () => fetch(`/api/sandbox/chaos/${$("chaos").value}`, { method: "POST" });
-  $("reset").onclick = async () => { await fetch("/api/sandbox/reset", { method: "POST" }); $("reset").textContent = "Data reset ✓"; setTimeout(() => ($("reset").textContent = "Reset data"), 1500); };
+  $("reset").onclick = async () => { await fetch("/api/sandbox/reset", { method: "POST" }); $("fault").value = ""; $("reset").textContent = "Data reset ✓"; setTimeout(() => ($("reset").textContent = "Reset data"), 1500); };
   $("cancel").onclick = () => current && fetch(`/api/runs/${current.runId}/cancel`, { method: "POST" });
   $("history").onclick = (e) => { const li = e.target.closest("li"); if (li) openRun(li.dataset.id); };
   loadHistory();
@@ -53,7 +60,8 @@ async function openRun(runId) {
   const started = data.events.find((e) => e.type === "run_started");
   resetView(runId, started?.data.task || "");
   data.events.forEach((e) => handle(e, false));
-  if (data.status === "running") {
+  current.sessionOpen = !!data.session_open;
+  if (data.status === "running" || data.session_open) {
     const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/runs/${runId}`);
     current.ws = ws;
     let skip = data.events.length;   // the socket replays history first
@@ -181,8 +189,18 @@ function handle(ev, live) {
       if (last && last.classList.contains("wait")) last.innerHTML = html; else add(html, "retry wait");
       break;
     }
+    case "write_review":
+      if (d.result !== "ok") add(`🛡 Pre-write review (${esc(d.result)}): ${esc(d.detail)}`, d.result === "unsourced" ? "block" : "reflect");
+      break;
+    case "circuit_open": add(`⚡ Circuit breaker opened for ${esc(d.host)}: the system looks down, no more calls to it`, "block"); break;
+    case "turn_started":
+      setStatus("running"); setPhase("understand");
+      $("result").classList.add("hidden"); $("cancel").classList.remove("hidden");
+      add(`Follow-up (turn ${esc(d.turn)}): ${esc(d.task)}`, "phase");
+      break;
+    case "session_closed": current.sessionOpen = false; $("followup")?.remove(); break;
     case "error": add(`⚠ ${esc(d.message)}`, "error"); break;
-    case "run_finished": finish(d); break;
+    case "run_finished": current.sessionOpen = !!d.can_follow_up; finish(d); break;
   }
 }
 
@@ -237,9 +255,25 @@ async function finish(d) {
     ${last?.criteria?.length ? `<table><tr><th>Success criterion</th><th>Met</th><th>Evidence observed by verifier</th></tr>${last.criteria.map((c) => `<tr><td>${esc(c.criterion)}</td><td class="${c.met ? "yes" : "no"}">${c.met ? "yes" : "no"}</td><td>${esc(c.evidence)}</td></tr>`).join("")}</table>` : ""}
     <p class="muted small">${r.metrics.tool_steps} steps · ${r.metrics.llm_calls} LLM calls · ${r.metrics.duration_s}s · ~$${r.metrics.cost_usd} · retries ${r.reliability.auto_retries} ·
       <a href="/runs/${r.run_id}/report.html" target="_blank" rel="noopener">Open full evidence report ↗</a>${r.video ? ` · <a href="/runs/${r.run_id}/${r.video}" target="_blank" rel="noopener">session video ↗</a>` : ""}</p>`;
+  if (current.sessionOpen) {
+    box.insertAdjacentHTML("beforeend", `<div class="human" id="followup" style="margin-top:10px;padding:10px">
+      <b>Follow up</b> <span class="muted small">same session: the worker keeps its memory and browser</span>
+      <div class="row"><input type="text" id="followupText" placeholder="e.g. What was the due date again? / Do the same for another supplier">
+      <button class="ok" id="followupSend">Send</button></div></div>`);
+    $("followupSend").onclick = sendFollowUp;
+    $("followupText").onkeydown = (e) => { if (e.key === "Enter") sendFollowUp(); };
+  }
   box.classList.remove("hidden");
   $("metrics").textContent = `${r.metrics.tool_steps} steps · $${r.metrics.cost_usd} · ${r.metrics.duration_s}s`;
   loadHistory();
+}
+
+async function sendFollowUp() {
+  const message = $("followupText").value.trim();
+  if (!message) return;
+  const res = await fetch(`/api/runs/${current.runId}/followup`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message }) });
+  if (!res.ok) { alert((await res.json()).detail || "Could not send"); return; }
+  $("followup")?.remove();
 }
 
 boot();

@@ -12,7 +12,7 @@
   h1 { font-size: 22px; margin: 0 0 6px; } h2 { font-size: 16px; margin: 0 0 10px; }
   .muted { color: var(--muted); font-size: 13px; }
   .status { display: inline-block; padding: 3px 10px; border-radius: 12px; font-weight: 600; font-size: 13px; }
-  .succeeded { background: #dcf3e6; color: var(--ok); } .failed, .error { background: #fde4e1; color: var(--bad); }
+  .succeeded, .answered { background: #dcf3e6; color: var(--ok); } .failed, .error { background: #fde4e1; color: var(--bad); }
   .blocked, .needs_review, .cancelled { background: #fdf0d9; color: var(--warn); }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -69,6 +69,17 @@
 {% for h in r.human_interactions %}<tr><td>{{ h.kind }}</td><td>{{ h.question }}</td>
 <td>{% if h.kind == 'approval' %}{{ 'approved' if h.response.approved else ('no answer' if h.response.timed_out else 'rejected') }}{% endif %} {{ h.response.answer }}</td></tr>{% endfor %}
 </table></div>
+{% endif %}
+
+{% if r.write_reviews %}
+<div class="card"><h2>Pre-write reviews</h2>
+<table><tr><th>Step</th><th>Write</th><th>Result</th><th>Detail</th></tr>
+{% for w in r.write_reviews %}<tr><td>{{ w.step }}</td><td>{{ w.action }}</td><td class="{{ 'yes' if w.result == 'ok' else 'no' }}">{{ w.result }}</td><td class="muted">{{ w.detail }}</td></tr>{% endfor %}
+</table></div>
+{% endif %}
+
+{% if r.turns and r.turns | length > 1 %}
+<div class="card"><h2>Conversation turns</h2><ol>{% for t in r.turns %}<li><b>{{ t.message }}</b> &rarr; {{ t.status }}: <span class="muted">{{ t.summary }}</span></li>{% endfor %}</ol></div>
 {% endif %}
 
 <div class="card"><h2>Reliability</h2>

@@ -19,18 +19,21 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import queue
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from sandbox import config as sandbox_config
+from sandbox.chaos import SWITCHES
 
 from ..config import get_settings
 from ..core.agent import Agent, new_run_id
@@ -40,21 +43,12 @@ from ..runtime.human import HumanResponse, WebHumanChannel
 
 STATIC = Path(__file__).parent / "static"
 
-SAMPLE_TASKS = [
-    {"label": "Headline: invoice → ERP",
-     "task": "Find the latest invoice from Acme, extract the amount and due date, enter it into our ERP, "
-             "and tell me once it is done."},
-    {"label": "Needs approval (> $10k)",
-     "task": "Record Globex's most recent invoice in the ERP."},
-    {"label": "Ambiguous request",
-     "task": "Put the latest Initech invoice into the ERP."},
-    {"label": "Inbox triage",
-     "task": "Go through the AP inbox and make sure every supplier invoice we received by email is recorded "
-             "in the ERP. Tell me what you did with each email."},
-    {"label": "Read-only report",
-     "task": "Which bills in the ERP are due in the next 14 days and not yet paid? Save them as a CSV in the "
-             "outbox and give me the total."},
-]
+def load_samples(path: Path) -> list[dict[str, str]]:
+    """Dashboard sample tasks come from config (per profile) - never from agent code."""
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    except OSError:
+        return []
 
 
 @dataclass
@@ -67,6 +61,8 @@ class RunHandle:
     subscribers: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue]] = field(default_factory=list)
     status: str = "running"
     lock: threading.Lock = field(default_factory=threading.Lock)
+    followups: "queue.Queue[str | None]" = field(default_factory=queue.Queue)
+    session_open: bool = True       # the agent keeps its browser/memory for follow-up messages
 
     def publish(self, ev: Event) -> None:
         d = ev.to_dict()
@@ -84,14 +80,21 @@ class StartRun(BaseModel):
     chaos: str | None = None
 
 
+class FollowUp(BaseModel):
+    message: str
+
+
+FOLLOWUP_IDLE_S = 30 * 60      # an idle session (waiting for follow-ups) is closed after 30 minutes
+
+
 class Respond(BaseModel):
     request_id: str
     approved: bool | None = None
     answer: str = ""
 
 
-def create_app(headed: bool = False) -> FastAPI:
-    settings = get_settings(headless=not headed, slow_mo_ms=250 if headed else None)
+def create_app(headed: bool = False, profile: str | None = None) -> FastAPI:
+    settings = get_settings(headless=not headed, slow_mo_ms=250 if headed else None, profile=profile)
     settings.runs_dir.mkdir(parents=True, exist_ok=True)
     runs: dict[str, RunHandle] = {}
     app = FastAPI(title="AI Task Worker", docs_url=None, redoc_url=None)
@@ -105,16 +108,37 @@ def create_app(headed: bool = False) -> FastAPI:
             raise HTTPException(400, "Task is empty.")
         if body.chaos:
             _sandbox_admin(f"chaos/{body.chaos}")
+        for other in runs.values():          # a new run closes idle sessions (the sandbox is shared)
+            if other.session_open:
+                other.followups.put(None)
         run_id = new_run_id()
         handle = RunHandle(run_id=run_id, task=body.task, human=WebHumanChannel())
         runs[run_id] = handle
 
+        async def session() -> None:
+            agent = Agent(make_llm(settings), settings, handle.human, run_id=run_id,
+                          on_event=handle.publish, cancel=handle.cancel, keep_open=True)
+            try:
+                await agent.run(body.task)
+                while not handle.cancel.is_set():
+                    try:
+                        msg = await asyncio.to_thread(handle.followups.get, True, FOLLOWUP_IDLE_S)
+                    except queue.Empty:
+                        break
+                    if msg is None:
+                        break
+                    handle.status = "running"
+                    await agent.follow_up(msg)
+            finally:
+                handle.session_open = False
+                await agent.close()
+                handle.publish(Event("session_closed", run_id, {}))
+
         def worker() -> None:
             try:
-                agent = Agent(make_llm(settings), settings, handle.human, run_id=run_id,
-                              on_event=handle.publish, cancel=handle.cancel)
-                asyncio.run(agent.run(body.task))
+                asyncio.run(session())
             except Exception as e:  # noqa: BLE001 - e.g. missing API key at client construction
+                handle.session_open = False
                 handle.publish(Event("error", run_id, {"message": f"{type(e).__name__}: {e}"}))
                 handle.publish(Event("run_finished", run_id, {"status": "error", "reason": str(e),
                                                                "summary": str(e)}))
@@ -153,7 +177,9 @@ def create_app(headed: bool = False) -> FastAPI:
             raise HTTPException(404, "Unknown run")
         report = json.loads((run_dir / "report.json").read_text(encoding="utf-8")) \
             if (run_dir / "report.json").exists() else None
-        return {"run_id": run_id, "status": status, "events": events, "pending": pending, "report": report}
+        open_ = runs[run_id].session_open if run_id in runs else False
+        return {"run_id": run_id, "status": status, "events": events, "pending": pending, "report": report,
+                "session_open": open_}
 
     @app.post("/api/runs/{run_id}/respond")
     def respond(run_id: str, body: Respond) -> dict[str, Any]:
@@ -162,12 +188,26 @@ def create_app(headed: bool = False) -> FastAPI:
             raise HTTPException(404, "No such pending request")
         return {"ok": True}
 
+    @app.post("/api/runs/{run_id}/followup")
+    def follow_up(run_id: str, body: FollowUp) -> dict[str, Any]:
+        h = runs.get(run_id)
+        if not h or not h.session_open:
+            raise HTTPException(409, "This session is closed. Start a new task instead.")
+        if h.status == "running":
+            raise HTTPException(409, "The worker is still busy with the previous message.")
+        if not body.message.strip():
+            raise HTTPException(400, "Message is empty.")
+        h.status = "running"
+        h.followups.put(body.message.strip())
+        return {"ok": True}
+
     @app.post("/api/runs/{run_id}/cancel")
     def cancel(run_id: str) -> dict[str, Any]:
         h = runs.get(run_id)
         if not h:
             raise HTTPException(404, "Unknown run")
         h.cancel.set()
+        h.followups.put(None)
         for p in h.human.pending():       # unblock a run waiting for a human
             h.human.resolve(p["id"], HumanResponse(approved=False, answer="cancelled"))
         return {"ok": True}
@@ -198,15 +238,30 @@ def create_app(headed: bool = False) -> FastAPI:
     # ---------------------------------------------------------------- config / sandbox
     @app.get("/api/config")
     def get_config() -> dict[str, Any]:
-        return {"model": settings.model, "provider": settings.llm_provider, "samples": SAMPLE_TASKS,
+        return {"model": settings.model, "provider": settings.llm_provider, "samples": load_samples(settings.samples_file), "profile": settings.profile,
                 "api_key_present": key_status(settings)[0], "api_key_message": key_status(settings)[1],
                 "systems": {"SupplierHub": sandbox_config.SUPPLIERHUB_URL, "ERP": sandbox_config.ERP_URL,
                             "Webmail": sandbox_config.MAIL_URL},
-                "chaos": _sandbox_admin("health", method="GET").get("chaos")}
+                "chaos": (health := _sandbox_admin("health", method="GET")).get("chaos"),
+                "switches": health.get("switches", []), "seed": health.get("seed"),
+                "all_switches": list(SWITCHES)}
 
     @app.post("/api/sandbox/reset")
     def sandbox_reset() -> dict[str, Any]:
-        return _sandbox_admin("reset")
+        try:   # reset to this server's profile seed (northwind / centralign); also clears fault switches
+            return _admin_client.post(f"{sandbox_config.ERP_URL}/__admin/reset", params={"seed": settings.profile},
+                                      timeout=60).json()
+        except httpx.HTTPError as e:
+            return {"ok": False, "error": str(e)}
+
+    @app.post("/api/sandbox/switch/{name}")
+    def sandbox_switch(name: str, on: bool = True) -> dict[str, Any]:
+        """Turn one named fault switch on/off (see sandbox/chaos.py), e.g. silent-drop for the demo."""
+        try:
+            r = _admin_client.post(f"{sandbox_config.ERP_URL}/__admin/switch/{name}", params={"on": str(on).lower()})
+            return r.json()
+        except httpx.HTTPError as e:
+            return {"ok": False, "error": str(e)}
 
     @app.post("/api/sandbox/chaos/{mode}")
     def sandbox_chaos(mode: str) -> dict[str, Any]:

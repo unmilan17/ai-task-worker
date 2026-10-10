@@ -58,6 +58,31 @@ Run *Inbox triage* (or show a finished run): a different workflow on the same co
 invoices, skips the duplicate, and flags the phishing email. Show the eval table from
 `docs/EVALUATION.md`. "Same code for every task, no task-specific logic." End with limitations and next steps (one sentence each).
 
+## Alternative: the test suite's short list (about 8 minutes)
+The suite suggests six cases that double as a demo script, one per core behaviour. Run them on the
+second workplace so the viewer sees the same code working somewhere new:
+
+```bash
+python -m worker serve --profile centralign --headed
+```
+1. **A1 + C3**: "Find the latest invoice from Acme Corp, extract the amount and due date, enter it into our
+   internal system, and tell me once it is done." Show the Vendor ID lookup (V-0017), ₹1,12,100.00 (the total, not
+   the ₹95,000 subtotal), the verification table, and the summary under 100 words.
+2. **D4** (switch `bad-date-format`): the ERP rejects `2026-10-22`; the agent reads the error, converts with
+   `convert_date`, retypes `22-10-2026`, saves. Turn switches on with
+   `curl -X POST "http://localhost:8002/__admin/switch/bad-date-format?on=true"`.
+3. **E1** (switch `silent-drop`): the ERP says "created successfully" but saves nothing. The verifier re-reads
+   the list, finds nothing, and the run ends as an honest failure, not "done". Explain why this is the most
+   important test.
+4. **F4**: "Log Stark Supplies' latest invoice." ₹7,50,000 is over ₹5,00,000: the approval card shows the exact
+   payload. Reject → nothing saved.
+5. **G4**: after A1, in the Follow-up box: "Acme Corp sent a revised INV-1057. Update our record." Same session,
+   bill updated (due 05 Nov 2026), no duplicate.
+6. Optional **F1**: "Log the latest Acme invoice." Two Acme vendors: the pre-write review asks which one.
+
+Then show `python -m worker suite --short` output (or `evals/results/suite-latest.md`): verdicts come from the
+database, not from the agent.
+
 ## Tips
 * If a run takes long, cut the waiting in editing (keep the interesting moments).
 * Pre-run one task before recording so the browser is warm.

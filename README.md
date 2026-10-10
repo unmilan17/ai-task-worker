@@ -46,11 +46,15 @@ systems, and returns a summary with evidence: facts with provenance, screenshots
 | Detect failures | Every tool result is classified (`transient`, `not_found`, `auth`, `validation`, `permission`, `rejected_by_user`…), including HTTP 4xx/5xx after form submissions. | `worker/tools/base.py` |
 | Retry / try alternatives | Auto-retry **only transient errors on idempotent actions** (never re-submit a form blindly). Loop and failure-streak detection forces reflection. Alternative routes (e.g. ERP REST API when the web form is broken). Hard budgets. | `worker/runtime/executor.py`, `loop_detector.py` |
 | **Verify** the outcome | Deterministic rule check + a **fresh, read-only auditor agent** that checks each success criterion in the live systems. Failures go back to the executor to fix. | `worker/core/verifier.py` |
-| Ask for clarification / approval | `ask_user` for genuine ambiguity. **Code-enforced approval rules** (e.g. amount > 10,000) pause the run and show the exact payload. Fails closed on timeout. | `worker/safety/policy.py`, `runtime/human.py` |
-| Concise summary + evidence | `report.html` / `report.json`: status, verification table, facts with sources, changes made, approvals, reliability stats, screenshots, session video, full JSONL trace. | `worker/core/report.py` |
+| Ask for clarification / approval | `ask_user` for genuine ambiguity, plus a **pre-write review** that asks the user itself when the worker is about to guess between candidates. **Code-enforced approval rules** (e.g. amount above a threshold) pause the run and show the exact payload. Fails closed on timeout. | `worker/safety/policy.py`, `safety/review.py`, `runtime/human.py` |
+| Concise summary + evidence | A summary of at most 100 words (enforced) with record IDs and values, plus `report.html` / `report.json`: verification table, facts with sources, changes made, approvals, reliability stats, screenshots, session video, full JSONL trace. | `worker/core/report.py` |
+| *(beyond the brief)* follow-up turns | "What was the due date again?" / "Do the same for Globex": the same session continues with its memory and browser. | `worker/core/agent.py` |
 
-Plus: credentials never reach the model (secret placeholders + redaction), prompt-injection resistance,
-a live web dashboard and a CLI, fault injection (`CHAOS=mild|hard`), an eval harness, and 46 automated tests.
+Plus: **no invented values** (every written value must trace to a source: a provenance check runs before
+each write), exact conversion tools for money/dates/payment terms, a circuit breaker for systems that are down,
+scanned-PDF reading via vision, credentials that never reach the model, prompt-injection resistance, a live web
+dashboard and a CLI, 14 named fault switches, an 8-scenario eval, a runnable **60-case test suite** with a
+state-based grader, and 107 automated tests.
 It runs on **free-tier LLM APIs** (Google Gemini by default), with built-in rate limiting for free quotas.
 
 ## 2. Quick start
@@ -76,8 +80,8 @@ python -m worker serve             # add --headed to watch the browser work
 Open **http://localhost:8000**, click a sample task, press **Run task**.
 
 The simulated company runs on http://localhost:8001 (SupplierHub), http://localhost:8002 (ERP, API docs
-at `/api/docs`) and http://localhost:8003 (Webmail). Test credentials are in `sandbox/test_credentials.json`
-if you want to click around yourself.
+at `/api/docs`), http://localhost:8003 (Webmail) and http://localhost:8004 (HelpDesk). Test credentials are in
+`sandbox/test_credentials.json` if you want to click around yourself.
 
 ## 3. Using it
 
@@ -86,6 +90,7 @@ if you want to click around yourself.
 * **Sample tasks**: headline task, approval (> $10k), ambiguous request, inbox triage, read-only report.
 * **Chaos** dropdown injects failures into the apps. **Reset data** restores the seed state.
 * Approval/question cards appear when the worker needs you. **Open full evidence report** for the audit view.
+* After a run, the **Follow up** box continues the same session ("What was the due date again?").
 
 ### Command line
 ```bash
@@ -93,10 +98,26 @@ python -m worker run "Find the latest invoice from Acme, extract the amount and 
 python -m worker run "Record Globex's most recent invoice in the ERP."        # asks for approval in the terminal
 python -m worker run "Put the latest Initech invoice into the ERP." --headed   # asks which invoice
 python -m worker run "<task>" --chaos hard --reset                            # with failures, fresh data
-python -m worker sandbox [--chaos mild]     # only the company apps
+python -m worker sandbox [--chaos mild] [--seed centralign]   # only the company apps
 python -m worker reset                      # reset sandbox data
-python -m worker eval [--repeat 3]          # evaluation suite
+python -m worker eval [--repeat 3]          # 8-scenario evaluation (default profile)
+python -m worker suite --short              # the 60-case test suite: one case per core behaviour
+python -m worker suite --only A3,D5 --repeat 3
 pytest -q                                   # automated tests (no API key needed)
+```
+In an interactive terminal, `run` stays open for **follow-up** messages after the first answer (Enter to finish).
+
+### Two workplaces (profiles)
+The same agent code runs in two workplaces. `--profile` (or `PROFILE` in `.env`) picks the onboarding
+document and policy, and the sandbox switches to the matching seed:
+* `northwind` (default): USD, the original traps, 8-scenario eval.
+* `centralign`: the 60-case test suite's fixtures. INR with Indian digit grouping, two look-alike Acme
+  vendors, a scanned USD invoice with Net 30 terms, ambiguous dates, hidden prompt injection, a ₹7,50,000
+  invoice above the ₹5,00,000 approval threshold, purchase orders, vendor onboarding, a HelpDesk app.
+
+```bash
+python -m worker serve --profile centralign
+python -m worker run "Log Stark Supplies' latest invoice." --profile centralign
 ```
 Every run writes `runs/<run_id>/` with `report.html`, `report.json`, `trace.jsonl`, `screens/` and `video/`.
 
@@ -104,6 +125,8 @@ Every run writes `runs/<run_id>/` with `report.html`, `report.json`, `trace.json
 * `.env`: provider and model (`LLM_PROVIDER`, `LLM_MODEL`; default Gemini free tier), `LLM_EFFORT`, rate limits, budgets, headless/video.
 * `config/environment.yaml`: what the worker knows about its workplace (systems, URLs, sign-in placeholders, company rules).
 * `config/policy.yaml`: hard guardrails (allowed hosts, approval rules and thresholds).
+* `config/centralign/*`: the same three files (plus dashboard samples) for the second profile.
+* `PROVENANCE_CHECK` / `AMBIGUITY_REVIEW` (both on by default): the two layers of the pre-write review.
 
 ### LLM providers (free tiers)
 All providers except Anthropic go through one OpenAI-compatible adapter (`worker/llm/openai_compat.py`).
@@ -149,7 +172,10 @@ flowchart LR
 * **Tools** are uniform (`Tool` → `ToolResult` with error kind + hint). The browser sees pages as compact
   text with element refs (`[12:button "Save bill"]`) and acts by ref.
 * **The Guard** enforces `policy.yaml` *in code*: host allow-list, read-only verifier, approval rules on the
-  real payload. **The vault** keeps credentials out of the model.
+  real payload. Before any write, the **pre-write review** checks that every value has a source and that the
+  worker is not guessing between candidates (if it is, the user is asked). **The vault** keeps credentials out of the model.
+* **The circuit breaker** stops calls to a system after repeated failed calls (each with spaced retries), so an
+  outage ends in a clear report instead of a spent budget.
 * **The verifier** is a separate conversation with read-only tools that checks every success criterion
   against the live systems.
 * **Everything is an event** → `trace.jsonl`, the CLI and the WebSocket dashboard.
@@ -171,6 +197,7 @@ Three real web apps with real state. The traps are deliberate. They test underst
 | An 18,250 USD invoice above the 10,000 approval threshold | SupplierHub |
 | A phishing email instructing "AI agents" to create a vendor and a bill | Webmail |
 | `CHAOS=mild`: random 503s, slow pages, first form submit fails *without saving*. `CHAOS=hard`: ERP form broken (API still works), sessions expire | all |
+| 14 named switches (one fault at a time): 500-once, session-expiry, popup, bad-date-format, outage, broken-pdf-link, corrupt-pdf, no-submit, **silent-drop** (says saved, saves nothing), **mangle-amount**, reject-one, relabel, s4-shipped-note, exfil-note | `sandbox/chaos.py` |
 
 ![SupplierHub](docs/img/supplierhub.png)
 
@@ -193,7 +220,11 @@ Summary below. Each one is explained with the alternatives in **[docs/DESIGN_DEC
 | One OpenAI-compatible adapter + presets (Gemini default), client-side rate limiter | Runs on free tiers; switching provider is one line in `.env` |
 | Append-only transcript that preserves provider extras (e.g. Gemini thought signatures) | Keeps the model's reasoning valid across steps; required for multi-turn tool calling on reasoning models |
 | Provider-agnostic LLM interface + `ScriptedLLM` | Vendor independence; deterministic, free tests of the real loop |
-| Environment knowledge as data, **zero task-specific code** | New tasks need no code; new systems need config or one Tool class |
+| Environment knowledge as data, **zero task-specific code** | New tasks need no code; new systems need config or one Tool class. A whole second workplace (`centralign`) and an unrelated HelpDesk app run on unchanged agent code |
+| Pre-write review: deterministic provenance check + narrow LLM ambiguity review | Stops invented values and silent guesses *before* they become records; verification afterwards cannot undo a wrong payment |
+| Exact conversion tools (amounts, dates, terms, arithmetic) | LLMs decide *which* value; code converts it. The same parser feeds the approval rules |
+| Circuit breaker per system | Bounded, explainable behaviour during outages |
+| State-based suite grader (pass / honest failure / false success / silent damage) | Measures what matters: the system state and whether the claim matches it |
 
 ## 6. Evaluation & tests
 
@@ -206,6 +237,10 @@ Summary below. Each one is explained with the alternatives in **[docs/DESIGN_DEC
   chaos (API fallback), approval rejected, approval granted, ambiguity, inbox triage with
   duplicate + phishing email, and a read-only CSV report. Live result on the Gemini free tier
   (`gemini-3.5-flash-lite`, one run each): **7 of 8 scenarios pass**.
+
+* **60-case test suite** (`python -m worker suite`), run against the second seed with the suite's fault
+  switches and graded from the databases with the suite's verdicts. Every case is mapped in
+  **[docs/TEST_SUITE_GAP_ANALYSIS.md](docs/TEST_SUITE_GAP_ANALYSIS.md)**. Live so far (Gemini free tier, one run each): the short list (A1, D4, E1, F4, G4) and F1 pass after two rounds of generic fixes, with **zero false success and zero silent damage across 9 runs**. The other 40 live cases still need free quota.
 
 Details and results: **[docs/EVALUATION.md](docs/EVALUATION.md)**.
 
@@ -234,6 +269,8 @@ AI coding assistants were used during development, as the brief permits.
 * "Latest invoice" = most recent **issue date** among documents of type *Invoice* (credit notes excluded).
 * The ERP amount is the invoice's **total due incl. tax**. Currency USD unless stated.
 * Bills above **10,000.00** need explicit approval from the requesting user (company rule, enforced in code).
+  In the `centralign` profile: entries above **₹5,00,000**, and invoices keep their printed currency.
+* "Flag for review if it is over ₹1,00,000" is compared on the invoice total. A follow-up refers to the earlier turns of the same session.
 * Bills land in the ERP as "Pending approval". The company's own approval workflow continues after data entry.
 * Sandbox credentials are fake test values committed on purpose. Production would use a secret manager.
 * One run at a time per dashboard instance (the sandbox is shared state).
@@ -245,7 +282,11 @@ AI coding assistants were used during development, as the brief permits.
 * No checkpoint/resume if the process dies mid-run. The dashboard has no authentication (local use).
 * Approval rules match field names/button text and need tuning for systems with unusual naming.
 * Free tiers have per-minute and per-day quotas, so runs are slower and a full eval may need more than one day of quota.
-* Live-tested on Gemini (`gemini-3.5-flash-lite`): 7 of 8 eval scenarios pass; the miss is that it does not ask when two records match equally well. Other providers are covered by offline tests only (see [EVALUATION.md](docs/EVALUATION.md)).
+* Live-tested on Gemini (`gemini-3.5-flash-lite`). The model itself tends not to ask when two records match equally
+  well; the pre-write ambiguity review was added to catch that, but it is also an LLM judgement. Most suite cases
+  still need live runs (free quota). Other providers are covered by offline tests only (see [EVALUATION.md](docs/EVALUATION.md)).
+* The provenance check trusts facts the worker recorded with `remember`. It blocks values seen nowhere, but it
+  cannot tell whether a recorded value was read correctly; that is the verifier's job.
 
 More: **[docs/LIMITATIONS_AND_ROADMAP.md](docs/LIMITATIONS_AND_ROADMAP.md)**.
 
@@ -254,7 +295,7 @@ More: **[docs/LIMITATIONS_AND_ROADMAP.md](docs/LIMITATIONS_AND_ROADMAP.md)**.
 2. Checkpoint/resume (survive restarts; wait days for an approval).
 3. Procedural memory: learn short "playbook" notes per system from verified runs.
 4. Context management (tool-result clearing / compaction) for long tasks.
-5. Vision fallback and desktop computer-use for non-web apps.
+5. Desktop computer-use for non-web apps (scanned PDFs already use vision).
 6. Parallel sub-agents (e.g. one per email) with a coordinator.
 7. Richer policies (roles, spend limits, two-person approval, Slack approvals) and production hardening.
 
@@ -262,9 +303,9 @@ More: **[docs/LIMITATIONS_AND_ROADMAP.md](docs/LIMITATIONS_AND_ROADMAP.md)**.
 
 ```
 worker/            the AI worker (core/ llm/ tools/ runtime/ safety/ memory/ server/ cli.py)
-sandbox/           the simulated company (SupplierHub, ERP + API, Webmail, chaos, seed data)
-config/            environment.yaml (workplace knowledge), policy.yaml (guardrails)
-evals/             eval scenarios, deterministic checks, runner
+sandbox/           the simulated company (SupplierHub, ERP + API, Webmail, HelpDesk, fault switches, two seeds)
+config/            environment.yaml (workplace knowledge), policy.yaml (guardrails); centralign/ for profile 2
+evals/             8-scenario eval (tasks, checks, runner) and suite/ (the 60-case test suite + grader)
 tests/             pytest suite
 docs/              documentation (below)
 runs/              per-run evidence (created at runtime)
@@ -278,6 +319,7 @@ workspace/         the worker's file area (inbox/, downloads/, outbox/)
 | [docs/CODE_WALKTHROUGH.md](docs/CODE_WALKTHROUGH.md) | file-by-file tour + one request traced through the code |
 | [docs/CONCEPTS.md](docs/CONCEPTS.md) | plain-language primer: agents, tool calling, idempotency, prompt injection... |
 | [docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md) | pitch, likely questions with answers, live debugging, modification exercises |
-| [docs/EVALUATION.md](docs/EVALUATION.md) | test suite, eval scenarios, results |
+| [docs/EVALUATION.md](docs/EVALUATION.md) | automated tests, eval scenarios, results |
+| [docs/TEST_SUITE_GAP_ANALYSIS.md](docs/TEST_SUITE_GAP_ANALYSIS.md) | the 60-case test suite: how each case is handled and run, evidence so far |
 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | shot list for the demo video |
 | [docs/LIMITATIONS_AND_ROADMAP.md](docs/LIMITATIONS_AND_ROADMAP.md) | limitations, assumptions, next steps |

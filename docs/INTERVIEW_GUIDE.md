@@ -198,9 +198,51 @@ label in the snapshot (improve `labelOf` in `dom_snapshot.js`).
 | Add a new error kind (e.g. RATE_LIMITED) | `tools/base.py` (`ErrorKind`, `DEFAULT_HINTS`), `http_api.py` (map 429), `executor.py` (retry with longer delay) | |
 
 ## 6. Numbers to know
-* About 5.5k lines of Python. 46 automated tests (no API key needed). 8 eval scenarios.
+* About 7.5k lines of Python. 107 automated tests (no API key needed). 8 eval scenarios + a runnable 60-case test suite.
 * Budgets: 60 tool steps, 30 minutes, USD 5 per run. Up to 2 auto-retries. Up to 2 verification-fix rounds.
-* Approval threshold: 10,000.00. Snapshot cap: 9,000 characters.
+* Approval threshold: 10,000.00 (northwind) / ₹5,00,000 (centralign). Snapshot cap: 9,000 characters. Summary ≤ 100 words.
+* Circuit breaker: 2 failed calls per system (3 spaced attempts + 1 probe). Pre-write review: ≤ 8 LLM reviews, ≤ 2 questions per run.
 * Live eval (Gemini free tier, `gemini-3.5-flash-lite`, one run each): 7 of 8 scenarios pass; about 30-45 LLM
   requests and 2.5-3.5 minutes per task. Free quota: Flash-Lite 500 requests/day (one full eval run); `gemini-3.8-flash` 5 requests/minute and 20/day.
 * See `docs/EVALUATION.md` for steps, time and cost per task.
+
+
+## 7. Questions about the test-suite additions
+
+**Q: The model picked between two invoices without asking. What did you do about it?**
+I stopped relying on the model to remember to ask. A pre-write review runs at the moment a write is about to
+happen: a fresh LLM call with one narrow question, "is this choice a guess between candidates?". If it names at
+least two concrete candidates, the *system* asks the user and holds the write. Requiring named candidates is what
+stops it from asking "shall I proceed?" on clear tasks (suite F6).
+
+**Q: How do you prevent invented values?**
+A deterministic provenance check: every value with a digit that is about to be written must appear in something the
+worker read, was told, or computed with an exact tool. Amounts and dates are compared by value, so "$1,234.50" on
+the page matches "1234.50" in the form. An invented due date matches nothing, so the write is blocked before it
+happens (test: `test_unsourced_value_is_blocked_before_writing`).
+
+**Q: What happens if a system is completely down?**
+Each call gets spaced retries. The circuit breaker counts failed calls per system: after the second it stops
+calling that system and tells the agent to finish with what failed, what it tried, the current state and the values
+it extracted. Counting calls, not attempts, means a merely flaky system doesn't trip it.
+
+**Q: How do you know a run really worked: what does "false success" mean in your suite?**
+The suite grader reads the databases, never the agent's message. False success = the agent says done but the state
+is wrong or unchanged. Silent damage = wrong, duplicated or extra records. Both should be zero. The silent-drop switch
+(the app says "saved" but saves nothing) is the sharpest test, and the independent verifier exists for it.
+
+**Q: Isn't the second seed just more mocking?**
+It is a second *workplace*: other currency, other traps, new modules and an unrelated ticketing app. The agent code
+is identical; only the onboarding document and policy differ. That is the generalization claim, and the G7 code
+audit checks that no fixture names appear in the agent's code or prompts.
+
+**Q: Walk me through debugging case E1 / D4 / F1 (the suite's "technical understanding" check).**
+Open `runs/<id>/trace.jsonl` (or the dashboard timeline):
+* E1 (silent-drop): `side_effect` (form posted, "created successfully") → the executor re-reads the bill list
+  itself, finds nothing → tries the API (`201 Created`, still nothing) → the `REPEATED WRITE` note tells it the
+  system is not saving → `finish` failed → verdict *honest failure*, never "done". (In the first live run, before
+  that note existed, it kept retrying until the step budget stopped it: still safe, but slow. That is why the note exists.)
+* D4: `tool_result` validation error "Dates must be entered as DD-MM-YYYY" → `convert_date` with target DD-MM-YYYY
+  → retyped → saved.
+* F1: `write_review` result *ambiguous* (candidates Acme Corp / Acme Corporation Pvt Ltd) → `human_request` →
+  answer → `needs_user_input` → retry with V-0017 → saved.

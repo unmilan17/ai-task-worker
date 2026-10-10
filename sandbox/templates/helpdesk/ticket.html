@@ -1,0 +1,17 @@
+{% extends "helpdesk/base.html" %}
+{% block title %}{{ t.ticket_id }}{% endblock %}
+{% block content %}
+{% if saved %}<p class="ok" role="status">Changes saved.</p>{% endif %}
+<h2>{{ t.ticket_id }}: {{ t.title }}</h2>
+<p><b>Requester:</b> {{ t.requester }}</p>
+<p>{{ t.description }}</p>
+<p><b>Current status:</b> {{ t.status }} &middot; <b>Current priority:</b> {{ t.priority }}{% if t.updated_at %} &middot; updated {{ t.updated_at }}{% endif %}</p>
+<form method="post" action="/tickets/{{ t.ticket_id }}">
+  <label for="priority">Priority</label>
+  <select id="priority" name="priority">{% for p in priorities %}<option {% if p == t.priority %}selected{% endif %}>{{ p }}</option>{% endfor %}</select>
+  <label for="status">Status</label>
+  <select id="status" name="status">{% for s in statuses %}<option {% if s == t.status %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+  <p><button type="submit">Save changes</button></p>
+</form>
+<p><a href="/tickets">&larr; All tickets</a></p>
+{% endblock %}

@@ -3,26 +3,42 @@
 {% block content %}
 <p><a href="/invoices">&larr; Back to documents</a></p>
 <h1>{{ d.doc_type }} {{ d.doc_id }}</h1>
+{% if d.scanned %}
+<p class="error">This document was received as a scanned image. Its contents are only available in the PDF.</p>
+<table style="width:auto">
+  <tr><th>Supplier</th><td>{{ d.supplier }}</td></tr>
+  <tr><th>Received</th><td>{{ fmt(d.issue_date) }}</td></tr>
+</table>
+{% else %}
 <table style="width:auto">
   <tr><th>Supplier</th><td>{{ d.supplier }}</td></tr>
   <tr><th>Bill to</th><td>Northwind Traders, Accounts Payable</td></tr>
-  <tr><th>Issue date</th><td>{{ d.issue_date | human_date }}</td></tr>
-  <tr><th>Due date</th><td>{{ d.due_date | human_date }}</td></tr>
+  <tr><th>Issue date</th><td>{{ d.display_issue or fmt(d.issue_date) }}</td></tr>
+  {% if d.doc_type == "Purchase Order" %}
+  <tr><th>Delivery date</th><td>{{ fmt(d.delivery_date) }}</td></tr>
+  {% else %}
+  <tr><th>Due date</th><td>{% if d.display_due %}{{ d.display_due }}{% elif d.due_date %}{{ fmt(d.due_date) }}{% else %}-{% endif %}</td></tr>
+  {% if d.terms %}<tr><th>Payment terms</th><td>{{ d.terms }}</td></tr>{% endif %}
+  {% endif %}
   <tr><th>Customer PO</th><td>{{ d.po_number }}</td></tr>
+  <tr><th>Currency</th><td>{{ d.currency }}</td></tr>
   <tr><th>Status</th><td><span class="badge {{ d.status }}">{{ d.status }}</span></td></tr>
+  {% if shipped_note %}<tr><th>Shipping</th><td>{{ shipped_note }}</td></tr>{% endif %}
 </table>
 <h2>Line items</h2>
 <table>
   <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead>
   <tbody>
-  {% for i in d.items %}<tr><td>{{ i.description }}</td><td class="num">{{ i.quantity }}</td><td class="num">{{ i.unit_price | money }}</td><td class="num">{{ i.total | money }}</td></tr>{% endfor %}
+  {% for i in d.items %}<tr><td>{{ i.description }}</td><td class="num">{{ i.quantity }}</td><td class="num">{{ i.unit_price | money(d.currency) }}</td><td class="num">{{ i.total | money(d.currency) }}</td></tr>{% endfor %}
   </tbody>
   <tfoot>
-    <tr><td colspan="3" class="num">Subtotal</td><td class="num">{{ d.subtotal | money }}</td></tr>
-    <tr><td colspan="3" class="num">Sales tax</td><td class="num">{{ d.tax | money }}</td></tr>
-    <tr><th colspan="3" class="num">Total due (USD)</th><th class="num">{{ d.total | money }}</th></tr>
+    <tr><td colspan="3" class="num">Subtotal</td><td class="num">{{ d.subtotal | money(d.currency) }}</td></tr>
+    <tr><td colspan="3" class="num">{{ d.tax_label }}</td><td class="num">{{ d.tax | money(d.currency) }}</td></tr>
+    <tr><th colspan="3" class="num">{% if d.doc_type == "Purchase Order" %}Order total{% else %}Total due{% endif %} ({{ d.currency }})</th><th class="num">{{ d.total | money(d.currency) }}</th></tr>
   </tfoot>
 </table>
 {% if d.memo %}<p class="muted">{{ d.memo }}</p>{% endif %}
+{% if d.hidden_text %}<p style="color:#ffffff;font-size:6px">{{ d.hidden_text }}</p>{% endif %}
+{% endif %}
 <p><a href="/invoices/{{ d.doc_id }}/pdf">Download PDF ({{ d.doc_id }}.pdf)</a></p>
 {% endblock %}

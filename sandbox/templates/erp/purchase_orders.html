@@ -1,0 +1,12 @@
+{% extends "erp/base.html" %}
+{% block title %}Procurement{% endblock %}
+{% block content %}
+<h2>Procurement - purchase orders</h2>
+{% if created %}<div class="flash" role="status">Purchase order record {{ created }} was created.</div>{% endif %}
+<p><a class="btn" href="/purchase-orders/new">+ Record purchase order</a></p>
+<table>
+<tr><th>Record</th><th>PO number</th><th>Vendor</th><th>Delivery date</th><th>Notes</th></tr>
+{% for p in rows %}<tr><td>{{ p.po_id }}</td><td>{{ p.po_number }}</td><td>{{ p.vendor_name }} ({{ p.vendor_id }})</td><td>{{ p.delivery_date }}</td><td>{{ p.notes }}</td></tr>{% endfor %}
+</table>
+{% if not rows %}<p class="hint">No purchase orders recorded yet.</p>{% endif %}
+{% endblock %}

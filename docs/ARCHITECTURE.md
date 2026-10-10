@@ -51,12 +51,15 @@ flowchart LR
 
 ## 2. The run lifecycle (state machine)
 
-Every task goes through the same phases. The code for this is `Agent.run` in
-[`worker/core/agent.py`](../worker/core/agent.py) and is meant to be read top to bottom.
+Every task goes through the same phases. The code for this is `Agent._turn` in
+[`worker/core/agent.py`](../worker/core/agent.py) and is meant to be read top to bottom. A run can
+continue with **follow-up turns** (`Agent.follow_up`); each turn goes through the same phases.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Understand
+    [*] --> Sanity
+    Sanity --> Blocked: empty / gibberish and the user gives no task
+    Sanity --> Understand
     Understand --> Blocked: out of scope
     Understand --> Clarify: blocking questions
     Understand --> Execute
@@ -69,10 +72,12 @@ stateDiagram-v2
     Verify --> Report: passed / rounds exhausted
     Blocked --> Report
     Report --> [*]
+    Report --> Understand: follow-up message (same session)
 ```
 
 | Phase | What happens | Output |
 |---|---|---|
+| **Sanity** | Deterministic: empty input or one word without digits ("asdf") → ask what is wanted; never act on it. | the real task, or `blocked` |
 | **Understand** | One structured LLM call turns the request into a `TaskSpec`: end goal, deliverable, **objectively checkable success criteria**, whether data changes, risks, an initial plan, blocking questions, and an out-of-scope flag. | `TaskSpec` (pydantic) |
 | **Clarify** | Only if the request lacks information the systems can't provide. Questions go to the human channel. | answers added to the kickoff |
 | **Execute** | A tool-calling conversation. Each turn: the model picks tools → executor runs them (policy, retries) → results (with the **new page state**) go back. Loop and failure detectors add reflection notes. Ends when the model calls `finish`. | a *claim*: status, summary, evidence |
@@ -80,7 +85,8 @@ stateDiagram-v2
 | **Report** | Final status computed from claim + verdict. `report.json`, `report.html`, screenshots, video and `trace.jsonl` written. | evidence bundle in `runs/<id>/` |
 
 **Final status values:**
-* `succeeded`: claimed completed **and** the verifier passed.
+* `succeeded`: claimed completed (or "no action needed") **and** the verifier passed.
+* `answered`: a follow-up question answered from what the session already knows (no tool calls, nothing changed).
 * `needs_review`: claimed completed but verification did not pass. The user should look.
 * `blocked`: stopped safely and needs the user (approval declined, ambiguous, out of scope).
 * `failed`: could not do it (including budget exhausted).
@@ -166,7 +172,10 @@ metadata**: `ok`, `error_kind` (an `ErrorKind` enum), `hint`, `screenshot`, `sid
 | Browser (Playwright) | `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_select`, `browser_extract_text`, `browser_back`, `browser_screenshot`, `browser_download` |
 | Files (sandboxed to `workspace/`) | `file_list`, `file_read` (PDF text extraction), `file_write` (text or CSV rows) |
 | APIs | `http_request` (allow-listed hosts, secret placeholders in headers/body) |
+| Exact conversions | `convert_amount`, `convert_date` (flags ambiguous dates), `due_date_from_terms`, `calculate` |
 | Agent-internal | `remember`, `recall`, `update_plan`, `ask_user`, `finish` (+ `submit_verdict` for the verifier) |
+
+`file_read` attaches the page image when a PDF has no text layer (a scan), so a vision model can read it.
 
 **How the agent "sees" a web page:** `dom_snapshot.js` converts the DOM to compact text in reading order.
 Headings become `#`, table rows become `| a | b |`, and every interactive element becomes an inline
@@ -178,6 +187,9 @@ Actions use the ref number. Every page-changing action returns the new snapshot 
   transient errors on idempotent calls** (exponential backoff) → redact secrets → emit events.
 * `loop_detector.py`: watches (action, outcome) pairs and injects a *reflection note* on repeated
   identical calls or on streaks of failures.
+* `breaker.py`: the **circuit breaker**. It counts consecutive failed calls per host. While a host has a failure
+  on record, later calls get a single probe instead of retries; the 2nd consecutive failed call opens the
+  circuit, and further calls fail immediately with `system_unavailable` (half-open after a cooldown).
 * `human.py`: the `HumanChannel` protocol and its CLI, web and scripted implementations.
 * `events.py`: the event bus and the JSONL trace writer.
 * `context.py`: `RunContext`, everything a tool needs (browser, vault, guard, memory, plan, events...).
@@ -190,6 +202,15 @@ Actions use the ref number. Every page-changing action returns the new snapshot 
   fingerprint.
 * `secrets.py`: the vault. The model uses `{{secret:name}}` placeholders. Values are substituted only
   inside tools and redacted from everything that flows back.
+* `review.py`: the **pre-write review**, called by the Guard for every form submission / HTTP write before
+  approval rules. (1) *Provenance* (deterministic): each value with a digit (amounts, dates, IDs) must appear in
+  the run's corpus: tool outputs (pages, files, API responses, conversion-tool results), the task text, user
+  answers and recorded facts. Amounts and dates are matched by value. Otherwise `unsourced_value`, not written.
+  (2) *Ambiguity* (LLM, fresh context, narrow question): "did the worker resolve a genuine ambiguity by
+  guessing?" A yes counts only with ≥ 2 concrete candidates or a missing value; then the system asks the user
+  and holds the write (`needs_user_input`) until the worker retries with the answer.
+
+**Order of checks for a write:** allow-list / read-only → pre-write review → approval rules → run.
 
 ### 4.5 Memory: `worker/memory/`
 * `WorkingMemory`: explicit facts with provenance (`key, value, source, step, url, screenshot`).
@@ -199,19 +220,28 @@ The conversation transcript itself is the short-term memory. Facts are the curat
 for the run: they feed the verifier and the report.
 
 ### 4.6 Interfaces
-* **CLI** (`worker/cli.py`): `run`, `serve`, `sandbox`, `reset`, `eval`. It prints the live event stream and handles approvals in the terminal.
+* **CLI** (`worker/cli.py`): `run`, `serve`, `sandbox`, `reset`, `eval`, `suite`. It prints the live event stream,
+  handles approvals in the terminal, and offers a follow-up prompt after each answer.
 * **Dashboard** (`worker/server/`): FastAPI + WebSocket + a static page. Each run executes in its own
   thread with its own event loop. Events stream to the browser. Approvals and questions are answered with buttons.
+  After a run the session stays open (30 min idle) for **follow-up** messages in the same conversation.
 
 ### 4.7 Sandbox: `sandbox/`
 | App | Port | Highlights |
 |---|---|---|
-| SupplierHub | 8001 | login, filter/sort/paginate, invoice detail, PDF download |
-| Northwind ERP | 8002 | login, sessions, vendors, bills list/search, new-bill form with server-side validation and duplicate detection, **REST API** + docs page |
+| SupplierHub | 8001 | login, filter by supplier/type, sort, paginate, document detail, PDF download (incl. scanned and hidden-text PDFs) |
+| Northwind ERP | 8002 | login, sessions, bills (create, edit, flag for review, bulk delete), vendor directory + onboarding, procurement (purchase orders), company-policies page, server-side validation, duplicate detection, **REST API** for all of it |
 | Webmail | 8003 | inbox, messages, PDF attachments, a prompt-injection email |
+| HelpDesk | 8004 | an unrelated IT ticketing app (login, tickets, change priority/status) for generalization tests |
 
-`chaos.py` injects faults (`off`/`mild`/`hard`). `/__admin/*` endpoints reset state for tests and evals;
-the agent's policy blocks them.
+**Two seeds** (`sandbox/data.py`, `sandbox/seed_centralign.py`): `northwind` (default) and `centralign` (the
+60-case test suite's fixtures). Seed settings change behaviour without code: default sort order, vendor
+dropdown vs free-text Vendor ID, field labels, currency, whether vendors can be created, policy text.
+
+`chaos.py` injects faults: modes (`off`/`mild`/`hard`) and 14 **named switches** for one fault at a time
+(500-once, session-expiry, popup, bad-date-format, outage, broken-pdf-link, corrupt-pdf, no-submit,
+silent-drop, mangle-amount, reject-one, relabel, s4-shipped-note, exfil-note). `/__admin/*` endpoints reset
+state (`?seed=`), set switches and report health for tests and evals; the agent's policy blocks them.
 
 ## 5. Data and artifacts
 
@@ -235,6 +265,8 @@ sandbox/state/
 | `.env` | provider, model, effort, rate limits, budgets, browser flags, API key | you switch provider or tune behaviour |
 | `config/environment.yaml` | the "onboarding doc": systems, URLs, sign-in placeholders, company rules | you point the worker at a different company/system set |
 | `config/policy.yaml` | hard guardrails: allowed hosts, approval rules | your risk appetite changes |
+| `config/centralign/` | the same files (+ dashboard samples) for the second workplace, selected with `PROFILE` / `--profile` | you add a workplace |
+| `evals/suite/cases.yaml` | the 60-case test suite: tasks, switches, scripted human, expected database state | you add suite cases |
 | `sandbox/test_credentials.json` | fake test credentials read by the vault | never in production (use a real secret store) |
 | `evals/tasks.yaml` | evaluation tasks + expected outcomes | you add test scenarios |
 

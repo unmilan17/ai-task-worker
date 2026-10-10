@@ -6,9 +6,14 @@
 <table>
 <tr><th>Method</th><th>Path</th><th>Description</th></tr>
 <tr><td>GET</td><td>/api/vendors</td><td>List vendors (vendor_id, name, legal_name, email, tax_id).</td></tr>
+{% if can_create_vendors %}<tr><td>POST</td><td>/api/vendors</td><td>Create a vendor. Body: name, legal_name, tax_id (GSTIN), email. Returns 201 with the vendor.</td></tr>{% endif %}
 <tr><td>GET</td><td>/api/bills</td><td>List bills. Optional query params: vendor_id, invoice_number, status, due_after, due_before (YYYY-MM-DD).</td></tr>
 <tr><td>GET</td><td>/api/bills/{bill_id}</td><td>Get one bill.</td></tr>
-<tr><td>POST</td><td>/api/bills</td><td>Create a bill. JSON body fields: vendor_id (e.g. V-001), invoice_number, invoice_date (YYYY-MM-DD), due_date (YYYY-MM-DD), amount (e.g. "1234.56"), currency (USD/EUR/GBP/INR), description (optional). Returns 201 with the created bill, 409 for duplicates, 422 for validation errors.</td></tr>
+<tr><td>POST</td><td>/api/bills</td><td>Create a bill. JSON body fields: vendor_id (e.g. V-001), invoice_number, invoice_date (YYYY-MM-DD), due_date (YYYY-MM-DD), amount (e.g. "1234.56"), currency (USD/EUR/GBP/INR), description (optional), flagged (optional, true = flag for review). Returns 201 with the created bill, 409 for duplicates, 422 for validation errors.</td></tr>
+<tr><td>PATCH</td><td>/api/bills/{bill_id}</td><td>Update fields of a bill (same field names as POST). Returns the updated bill.</td></tr>
+<tr><td>DELETE</td><td>/api/bills/{bill_id}</td><td>Delete a bill.</td></tr>
+<tr><td>GET</td><td>/api/purchase-orders</td><td>List recorded purchase orders.</td></tr>
+<tr><td>POST</td><td>/api/purchase-orders</td><td>Record a purchase order. Body: po_number, vendor_id, delivery_date (YYYY-MM-DD), notes.</td></tr>
 </table>
-<p class="hint">The API applies the same validation rules as the web form.</p>
+<p class="hint">The API applies the same validation rules as the web forms.</p>
 {% endblock %}

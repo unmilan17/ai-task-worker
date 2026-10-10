@@ -35,6 +35,7 @@ import yaml
 
 from ..runtime.human import HumanRequest
 from ..tools.base import ErrorKind, ToolError
+from ..tools.parsing import parse_amount
 
 if TYPE_CHECKING:
     from ..runtime.context import RunContext
@@ -100,15 +101,9 @@ def _flatten(d: Any, prefix: str = ""):
 
 
 def _to_number(v: Any) -> float | None:
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        return float(v)
-    if isinstance(v, str):
-        cleaned = re.sub(r"[^\d.\-]", "", v)   # tolerate "$18,250.00"
-        try:
-            return float(cleaned) if cleaned not in {"", ".", "-"} else None
-        except ValueError:
-            return None
-    return None
+    """Parse an amount the same way the agent's tools do ('Rs. 7,50,000', '1,12,100/-', '$18,250.00')."""
+    m = parse_amount(v) if isinstance(v, (str, int, float)) else None
+    return float(m.amount) if m is not None else None
 
 
 class Policy:
@@ -153,9 +148,13 @@ class Guard:
         if ctx.read_only and action.kind in writes and not action.is_login:
             self._block(ctx, action, "the verifier runs in read-only mode and may not change anything")
 
-        # 2. Approval rules: one question per action, listing every rule it triggers
+        # 2. Pre-write review: no invented values, no silent guessing between candidates
         if action.kind == "form_submit" and action.is_login:
             return
+        if action.kind in ("form_submit", "http_write") and not ctx.read_only and getattr(ctx, "reviewer", None) is not None:
+            await ctx.reviewer.review(action, ctx)
+
+        # 3. Approval rules: one question per action, listing every rule it triggers
         triggered = [(rule, why, action.fingerprint(rule.id)) for rule in self.policy.rules
                      if (why := rule.matches(action))]
         triggered = [t for t in triggered if t[2] not in self._approved]

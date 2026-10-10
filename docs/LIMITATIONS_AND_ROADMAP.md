@@ -6,8 +6,8 @@
 * The worker operates three purpose-built web apps, a REST API and local files. It is not tested on
   arbitrary public websites (CAPTCHAs, heavy JavaScript apps, iframes, shadow DOM, canvas UIs).
 * No desktop-application control. "Computer use" here means a real browser, HTTP and the file system.
-* Webmail is read-only (no sending), and new vendors can't be created in the ERP (by design: that is
-  procurement's job, so the agent must report instead of inventing a workaround).
+* Webmail is read-only (no sending). In the default profile new vendors can't be created in the ERP (by
+  design: that is procurement's job); the `centralign` profile enables vendor onboarding.
 
 **Agent behaviour**
 * LLMs are non-deterministic. The same task can take a different path, or occasionally fail, from run to
@@ -19,11 +19,14 @@
   long tasks (hundreds of steps) would need server-side context editing or compaction (not enabled).
 * Tool calls run sequentially within a run, and there is one browser tab per run. No parallel sub-agents.
 * The understand step can only ask questions *before* acting if the ambiguity is visible in the request.
-  Ambiguity discovered in the data (e.g. two Initech invoices) relies on the model choosing to `ask_user`,
-  which Flash-Lite did not do in the live eval.
+  Ambiguity discovered in the data (e.g. two Initech invoices) was missed by Flash-Lite in the live eval; the
+  pre-write ambiguity review now asks at write time, but it is also an LLM judgement (measured by suite F1–F3, F6).
+* The provenance check trusts recorded facts: it blocks values seen nowhere, but cannot tell whether a recorded
+  value was read correctly (that is the verifier's job).
 
 **Reliability**
-* No checkpoint/resume: if the process dies mid-run, the run is lost (the trace remains).
+* No checkpoint/resume: if the process dies mid-run, the run is lost (the trace remains). Re-running the task is
+  safe (duplicate checks), which suite D8 tests. Follow-up sessions live in memory only (30 min idle in the dashboard).
 * Error classification for browser actions relies on HTTP status codes and Playwright exceptions. A
   web app that returns "200 OK" with an error message in the page is only detected by the model reading the page.
 * Budgets are estimates (cost uses list prices and token counts reported by the API; free tiers report $0).

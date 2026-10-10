@@ -2,7 +2,7 @@
 
 The agent sometimes has to stop and ask a person:
 
-* ``clarification`` - "Two Initech invoices were issued on the same day; which one?"
+* ``clarification`` - "Two invoices from this supplier have the same date; which one?"
 * ``approval``      - "Create a bill for 18,250.00 USD? (policy: > 10,000 needs approval)"
 
 The agent awaits ``channel.request(req)``. *How* the question reaches a human
@@ -133,12 +133,14 @@ class ScriptedHumanChannel:
 
     approve: bool = True
     answers: list[tuple[str, str]] = field(default_factory=list)
+    approval_answer: str | None = None       # e.g. "cancel" - the free-text reply sent with an approval decision
     default_answer: str = "I don't know - use your best judgement and tell me what you assumed."
     log: list[tuple[HumanRequest, HumanResponse]] = field(default_factory=list)
 
     async def request(self, req: HumanRequest, timeout_s: float) -> HumanResponse:
         if req.kind == "approval":
-            resp = HumanResponse(approved=self.approve, answer="approved" if self.approve else "rejected")
+            resp = HumanResponse(approved=self.approve,
+                                 answer=self.approval_answer or ("approved" if self.approve else "rejected"))
         else:
             text = req.question + " " + " ".join(req.options)
             ans = next((a for pat, a in self.answers if re.search(pat, text, re.I)), self.default_answer)

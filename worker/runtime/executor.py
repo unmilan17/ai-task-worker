@@ -91,6 +91,16 @@ def _classify_exception(e: Exception) -> ErrorKind:
     return ErrorKind.FATAL
 
 
+def _target_host(call: ToolCall, ctx: RunContext) -> str | None:
+    """Which system does this call talk to? (for the circuit breaker)"""
+    url = call.args.get("url") if isinstance(call.args, dict) else None
+    if isinstance(url, str) and url.startswith("http"):
+        return ctx.breaker.host_of(url)
+    if call.name.startswith("browser_") and ctx.browser is not None and ctx.browser.page is not None:
+        return ctx.breaker.host_of(ctx.browser.page.url)
+    return None
+
+
 class ToolExecutor:
     def __init__(self, registry: ToolRegistry, ctx: RunContext) -> None:
         self.registry = registry
@@ -113,7 +123,16 @@ class ToolExecutor:
                             error_kind=res.error_kind.value, output=res.output)
             return res
 
-        max_retries = ctx.settings.max_tool_retries
+        host = _target_host(call, ctx)
+        if ctx.breaker.is_open(host):
+            res = ToolResult.failure(ErrorKind.UNAVAILABLE,
+                                     f"{host} is unavailable: its circuit breaker is open after repeated failures. "
+                                     f"The call was not made.")
+            ctx.events.emit("tool_result", step=ctx.step, call_id=call.id, name=call.name, ok=False,
+                            error_kind=res.error_kind.value, output=res.output, hint=res.hint)
+            return res
+        # A host that just failed gets a single probe instead of the usual spaced retries.
+        max_retries = 0 if ctx.breaker.suspect(host) else ctx.settings.max_tool_retries
         attempt = 0
         while True:
             attempt += 1
@@ -131,7 +150,7 @@ class ToolExecutor:
             retry_safe = res.retry_safe if res.retry_safe is not None else tool.is_idempotent(args)
 
             if (not res.ok and res.error_kind == ErrorKind.TRANSIENT and retry_safe and attempt <= max_retries):
-                delay = 0.5 * (2 ** (attempt - 1))
+                delay = 1.0 * (2 ** (attempt - 1))      # spaced: 1 s, 2 s, ...
                 ctx.events.emit("retry", step=ctx.step, call_id=call.id, name=call.name, attempt=attempt,
                                 delay_s=delay, error=res.output[:300])
                 await asyncio.sleep(delay)
@@ -140,6 +159,12 @@ class ToolExecutor:
             if attempt > 1:
                 res.output = (f"(succeeded on attempt {attempt} after transient errors)\n" if res.ok else
                               f"(still failing after {attempt} attempts)\n") + res.output
+            transient = not res.ok and res.error_kind == ErrorKind.TRANSIENT
+            if ctx.breaker.record(host, transient):
+                ctx.events.emit("circuit_open", step=ctx.step, host=host)
+                res = ToolResult.failure(ErrorKind.UNAVAILABLE,
+                                         f"{host} appears to be DOWN: repeated calls failed even after spaced "
+                                         f"retries. Last error: {res.output[:300]}", screenshot=res.screenshot)
             ctx.events.emit(
                 "tool_result", step=ctx.step, call_id=call.id, name=call.name, ok=res.ok,
                 error_kind=res.error_kind.value if res.error_kind else None,

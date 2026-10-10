@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}HelpDesk{% endblock %} · Northwind IT HelpDesk</title>
+<style>
+  body { font-family: Georgia, "Times New Roman", serif; margin: 0; background: #f7f3ee; color: #2b2118; }
+  header { background: #5b2c6f; color: #fff; padding: 12px 24px; display: flex; justify-content: space-between; }
+  header a { color: #f0dcff; margin-left: 12px; }
+  main { max-width: 900px; margin: 24px auto; background: #fff; padding: 22px 28px; border: 1px solid #e3d9cc; }
+  table { width: 100%; border-collapse: collapse; } th, td { padding: 8px; border-bottom: 1px solid #eee3d6; text-align: left; }
+  .tag { padding: 2px 8px; border-radius: 10px; background: #efe6f4; font-size: 13px; }
+  button { background: #5b2c6f; color: #fff; border: 0; padding: 7px 14px; cursor: pointer; }
+  .ok { background: #e3f4e1; padding: 8px 12px; } .error { background: #fbe3e3; padding: 8px 12px; }
+  label { display: block; margin-top: 10px; font-weight: bold; }
+</style>
+</head>
+<body>
+<header><b>Northwind IT HelpDesk</b><span>{% if user %}{{ user }} <a href="/tickets">Tickets</a>{% endif %}</span></header>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

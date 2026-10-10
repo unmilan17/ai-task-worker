@@ -75,6 +75,8 @@ class ScriptedLLM(LLMClient):
         return conv
 
     async def structured(self, system: str, prompt: str, schema: type[T]) -> T:
+        if schema.__name__ not in self.structured_responses and hasattr(schema, "scripted_default"):
+            return schema.scripted_default()   # e.g. the pre-write review: "not ambiguous" unless scripted
         resp = self.structured_responses[schema.__name__]
         return resp(prompt) if callable(resp) else resp
 

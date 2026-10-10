@@ -6,10 +6,10 @@ A guided tour of the code base: what each file does, the important functions, an
 ```
 ai-task-worker/
 ├── worker/                    the AI worker
-│   ├── cli.py                 command-line entry point (run / serve / sandbox / reset / eval)
+│   ├── cli.py                 command-line entry point (run / serve / sandbox / reset / eval / suite)
 │   ├── config.py              all settings (from .env)
 │   ├── core/                  the "brain" - phases of a run
-│   │   ├── agent.py           ★ orchestrator: understand → execute → verify → report
+│   │   ├── agent.py           ★ orchestrator: sanity → understand → execute → verify → report; follow-up turns
 │   │   ├── loop.py            ★ act/observe/reflect loop + budgets
 │   │   ├── task_spec.py       UNDERSTAND: request → TaskSpec
 │   │   ├── verifier.py        VERIFY: rule check + read-only auditor
@@ -27,28 +27,35 @@ ai-task-worker/
 │   │   ├── dom_snapshot.js    page → text with [ref:kind "label"] tokens
 │   │   ├── files.py           sandboxed workspace file tools (PDF reading)
 │   │   ├── http_api.py        REST API tool
+│   │   ├── parsing.py         ★ exact parsing: amounts (₹/Rs./Indian grouping), dates (+ambiguity), Net-N, arithmetic
+│   │   ├── data_tools.py      convert_amount / convert_date / due_date_from_terms / calculate
 │   │   ├── agent_tools.py     remember / recall / update_plan / ask_user / finish / submit_verdict
 │   │   └── registry.py        which tools the executor and verifier get
 │   ├── runtime/               machinery that runs tools safely
 │   │   ├── executor.py        ★ validate → run → classify → retry → redact → log
 │   │   ├── loop_detector.py   stuck detection → reflection notes
+│   │   ├── breaker.py         circuit breaker per system (host)
 │   │   ├── context.py         RunContext (everything a tool needs)
 │   │   ├── human.py           human-in-the-loop channels (CLI / web / scripted)
 │   │   └── events.py          event bus + trace writer
 │   ├── safety/
-│   │   ├── policy.py          ★ Guard: allow-list, read-only mode, approval rules
+│   │   ├── policy.py          ★ Guard: allow-list, read-only mode, pre-write review, approval rules
+│   │   ├── review.py          ★ pre-write review: provenance check + ambiguity review
 │   │   └── secrets.py         credential vault (placeholders + redaction)
 │   ├── memory/working_memory.py   facts with provenance + the plan
 │   └── server/                web dashboard (FastAPI + WebSocket + static UI)
 ├── sandbox/                   the simulated company
-│   ├── data.py                seed data (with the deliberate traps)
-│   ├── supplierhub.py / erp.py / mail.py   the three apps
-│   ├── chaos.py               fault injection
+│   ├── data.py                seed data model + the default "northwind" seed (with the deliberate traps)
+│   ├── seed_centralign.py     the 60-case test suite's fixtures (second seed)
+│   ├── supplierhub.py / erp.py / mail.py / helpdesk.py   the four apps
+│   ├── chaos.py               fault injection: modes + 14 named switches
 │   ├── state.py / pdfgen.py / launcher.py / common.py / config.py
 │   └── templates/             HTML for the apps
 ├── config/environment.yaml    what the worker knows about its workplace
 ├── config/policy.yaml         hard guardrails
-├── evals/                     evaluation suite (tasks, checks, runner)
+├── config/centralign/         the same for the second workplace (+ dashboard samples)
+├── evals/                     8-scenario eval (tasks, checks, runner)
+├── evals/suite/               the 60-case test suite: cases.yaml, grader.py (verdicts from DB state), run_suite.py
 └── tests/                     pytest suite (no API key needed)
 ```
 ★ = the files to know best.
@@ -233,3 +240,84 @@ If the ERP form had failed (CHAOS=mild), step 11 would return `ERROR [transient]
 hint *"may or may not have been saved: check the target system BEFORE submitting again"*, with
 `retry_safe=False`, so the executor would not retry. The model would then search the bills list, see
 nothing, and resubmit.
+
+
+---
+
+## Additions for the 60-case test suite
+
+### `worker/tools/parsing.py` + `data_tools.py`: exact conversions
+* `parse_amount(text) -> Money(amount: Decimal, currency)`: removes the currency token (₹, Rs., INR, $, USD...),
+  `/-`, and all grouping commas (so Indian `1,12,100` and western `112,100` both work). Handles negatives and `(150.00)`.
+* `parse_date(text, day_first=None)`: ISO, `22 Oct 2026`, `October 22, 2026`, `22/10/2026`, `22-10-2026`. Numeric
+  dates with two valid readings raise **`AmbiguousDate`** listing both. `find_dates(text)` / `find_amounts(text)`
+  extract every date/number from a block of text (used by the provenance check).
+* `due_from_terms(issue, "Net 30")` and `calculate("48,500 + 1,12,100")`. The calculator walks the Python AST and
+  allows only numbers and `+ - * / ( )`, so it cannot run code.
+* The four tools wrap these. `convert_date` returns an `AMBIGUOUS` validation error with a hint to find evidence
+  or ask, instead of guessing. `policy._to_number` now uses `parse_amount` (bug fix: `Rs. 48500` used to be 0.485).
+
+### `worker/safety/review.py`: the pre-write review
+* Called from `Guard.authorize` for `form_submit` (not logins) and `http_write`, before the approval rules.
+* `_corpus(ctx)` = task text + every tool output of the run + user answers + recorded facts.
+* `unsourced_values(fields, corpus)`: for each field value containing a digit: date-like → any reading in
+  `find_dates(corpus)`; amount-like → value in `find_amounts(corpus)`; otherwise → substring of the corpus.
+  Missing → `ToolError(UNSOURCED)`, and nothing is written.
+* `WriteReviewer.review()`: then (if enabled, max 8 reviews / 2 clarifications per run) a structured LLM call
+  with `REVIEW_SYSTEM` and the request, payload, facts and the last 8 observations. `WriteReview(ambiguous,
+  kind, candidates, question, explanation)`. A yes counts only with ≥ 2 candidates (or a missing value):
+  the system asks the user (`HumanRequest`), then raises `NEEDS_INPUT` with the answer so the worker retries.
+  Each decision is logged (`write_review` event, `report.write_reviews`).
+* `WriteReview.scripted_default()` makes `ScriptedLLM` return "not ambiguous" unless a test scripts a review.
+
+### `worker/runtime/breaker.py` + executor changes
+* `CircuitBreaker.record(host, transient_failure)` counts consecutive failed *calls* per host; the 2nd opens the circuit.
+  `suspect(host)` turns off automatic retries for a host that just failed. `is_open(host)` makes the executor
+  refuse the call with `system_unavailable` (half-open after 5 minutes).
+* `executor._target_host(call, ctx)`: the URL argument's host, or the current page's host for browser actions.
+* Retry backoff is now 1 s, 2 s ("spaced").
+
+### `worker/core/agent.py`: turns, follow-ups, sanity check
+* `Agent(..., keep_open=True)` keeps the browser and executor conversation after `run()`;
+  `follow_up(message)` runs another `_turn`; `close()` ends the session.
+* `_turn()`: fresh `Budget` per turn; `is_unclear()` sanity check on the first turn; the spec input for a follow-up
+  includes the previous turns and the recorded facts; turn 1 uses `EXECUTOR_KICKOFF`, later turns
+  `loop.resume(pending, FOLLOWUP_KICKOFF)`. A follow-up that changes nothing and calls no tools is `answered`
+  without verification. If a turn dies mid-loop, the conversation is dropped so a follow-up starts cleanly (facts kept).
+* `verify(..., actions_from=...)` and `build_report(..., actions_from=..., turns=...)` only consider this turn's writes.
+* `finish` gained the `no_action_needed` status. `rule_check` rejects "completed" with no writes and
+  "no_action_needed" with writes. `ToolLoop._check_terminal` sends back summaries over 100 words (at most twice).
+
+### `worker/tools/files.py`: scanned and corrupt PDFs
+* `_open_pdf` / `read_any` turn any pypdf error into a `validation` error with "do not guess".
+* A PDF without a text layer → `_scanned_pdf()` extracts the page image to `runs/<id>/pages/` and returns it as
+  `image_path` (the adapters attach it as an image if the model has vision).
+
+### Sandbox: second seed, switches, new features
+* `data.SeedSettings`: per-seed behaviour (portal sort, vendor field, labels, currency, vendor creation, policies).
+  `build_seed(today, name)` dispatches to `seed_centralign.build_centralign_seed`.
+* `state.reset(today, seed_name)` rebuilds the ERP and HelpDesk SQLite DBs and all PDFs. `POST /__admin/reset?seed=`.
+* `chaos.Chaos.set_switch / on / fire_once`; `POST /__admin/switch/<name>?on=true`; reset clears all switches.
+* `erp.py`: `validate_bill(via_form=...)` (date format switch, reject-one), `submit_bill` (500-once, silent-drop,
+  mangle-amount), `update_bill`, `delete_bills`, `create_vendor`, `create_po`, and matching UI + API routes.
+* `pdfgen.py`: INR formatting with Indian grouping, `_render_scanned` (a Pillow image in a PDF), hidden white text.
+* `helpdesk.py`: tickets list/detail/update.
+
+### `evals/suite/`: the harness
+* `cases.yaml`: 46 live cases + offline/aggregate/manual entries; `extra_checks` with `tag` judge other suite
+  cases on the same run (e.g. H1 on A1).
+* `grader.py`: `snapshot()` reads the DBs; `grade(case, before, after, reports, run_dirs)` builds `Check`s
+  (state / damage / behaviour) and `_verdict()` maps them to pass / honest_failure / false_success /
+  silent_damage (+ inconsistent, fail_behaviour). It also checks every run for leaked secrets (I4).
+* `run_suite.py`: `_prepare` (reset seed, switches) → `_run_live` (normal, follow-ups, kill-and-restart,
+  sequence) → grade → `suite-latest.md` with per-case x/N and the criteria scorecard. `_offline` runs the G7
+  code audit and the J6 unit tests.
+
+### Fixes from the first live suite run
+* `review.key_terms(task)` / `evidence_lines(task, outputs)`: the ambiguity reviewer also sees every line of the
+  whole run that mentions the request's key terms (F1: a second matching vendor seen many steps earlier).
+* `RunContext.repeated_writes()` + the `REPEATED WRITE` note in `ToolLoop._run`: stop re-submitting data that
+  "succeeds" but does not persist (E1).
+* `Agent._stopped_summary()`: when a budget stops the run, the summary lists changes made, facts found and what to check.
+* `Agent._turn`: a `needs_review` summary is rewritten to "NOT VERIFIED … an independent check found …"; a
+  budget stop replaces any earlier claim. `ToolLoop.counts_steps` is False for the verifier (own 25-step cap).

@@ -8,23 +8,26 @@
     <option value="">All suppliers</option>
     {% for s in suppliers %}<option value="{{ s }}" {% if s == supplier %}selected{% endif %}>{{ s }}</option>{% endfor %}
   </select>
+  <label for="doc_type">Type</label>
+  <select id="doc_type" name="doc_type">
+    <option value="">All types</option>
+    {% for t in doc_types %}<option value="{{ t }}" {% if t == doc_type %}selected{% endif %}>{{ t }}</option>{% endfor %}
+  </select>
   <label for="sort">Sort by</label>
   <select id="sort" name="sort">
-    <option value="updated" {% if sort == 'updated' %}selected{% endif %}>Last updated</option>
-    <option value="issued" {% if sort == 'issued' %}selected{% endif %}>Issue date (newest first)</option>
-    <option value="number" {% if sort == 'number' %}selected{% endif %}>Document number</option>
+    {% for key, s in sorts.items() %}<option value="{{ key }}" {% if sort == key %}selected{% endif %}>{{ s[0] }}</option>{% endfor %}
   </select>
   <button type="submit">Apply</button>
 </form>
-<p class="muted">{{ total }} document(s). Page {{ page }} of {{ pages }}.</p>
+<p class="muted">{{ total }} document(s). Page {{ page }} of {{ pages }}. Sorted by {{ sorts[sort][0] | lower }}.</p>
 <table>
   <thead><tr><th>Document #</th><th>Supplier</th><th>Type</th><th>Issued</th><th>Last updated</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
   <tbody>
   {% for d in rows %}
     <tr>
       <td>{{ d.doc_id }}</td><td>{{ d.supplier }}</td><td>{{ d.doc_type }}</td>
-      <td>{{ d.issue_date | human_date }}</td><td>{{ d.last_updated | human_date }}</td>
-      <td class="num">{{ d.total | money }}</td>
+      <td>{{ d.display_issue or fmt(d.issue_date) }}</td><td>{{ fmt(d.last_updated) }}</td>
+      <td class="num">{{ d.total | money(d.currency) }}</td>
       <td><span class="badge {{ d.status }}">{{ d.status }}</span></td>
       <td><a href="/invoices/{{ d.doc_id }}">View {{ d.doc_id }}</a></td>
     </tr>
@@ -32,8 +35,8 @@
   </tbody>
 </table>
 <p class="pager">
-  {% if page > 1 %}<a href="/invoices?supplier={{ supplier | urlencode }}&sort={{ sort }}&page={{ page - 1 }}">&larr; Previous page</a>{% endif %}
+  {% if page > 1 %}<a href="/invoices?supplier={{ supplier | urlencode }}&doc_type={{ doc_type | urlencode }}&sort={{ sort }}&page={{ page - 1 }}">&larr; Previous page</a>{% endif %}
   <span>Page {{ page }} of {{ pages }}</span>
-  {% if page < pages %}<a href="/invoices?supplier={{ supplier | urlencode }}&sort={{ sort }}&page={{ page + 1 }}">Next page &rarr;</a>{% endif %}
+  {% if page < pages %}<a href="/invoices?supplier={{ supplier | urlencode }}&doc_type={{ doc_type | urlencode }}&sort={{ sort }}&page={{ page + 1 }}">Next page &rarr;</a>{% endif %}
 </p>
 {% endblock %}

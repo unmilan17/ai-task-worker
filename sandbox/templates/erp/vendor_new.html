@@ -1,0 +1,16 @@
+{% extends "erp/base.html" %}
+{% block title %}Add vendor{% endblock %}
+{% block content %}
+<h2>Add vendor</h2>
+{% if not can_create %}<div class="alert" role="alert">Vendor onboarding is handled by the procurement team and is not available here.</div>{% endif %}
+{% if errors %}<div class="alert" role="alert">The vendor was not saved. Please correct the highlighted fields.</div>{% endif %}
+<form method="post" action="/vendors/new">
+  <div class="field"><label for="name">Vendor name</label><input id="name" name="name" value="{{ form.name or '' }}">
+    {% if errors.name %}<div class="err">{{ errors.name }}</div>{% endif %}</div>
+  <div class="field"><label for="legal_name">Legal name</label><input id="legal_name" name="legal_name" value="{{ form.legal_name or '' }}"></div>
+  <div class="field"><label for="tax_id">GSTIN / Tax ID</label><input id="tax_id" name="tax_id" value="{{ form.tax_id or '' }}"></div>
+  <div class="field"><label for="email">Billing contact e-mail</label><input id="email" name="email" value="{{ form.email or '' }}">
+    {% if errors.email %}<div class="err">{{ errors.email }}</div>{% endif %}</div>
+  <button type="submit">Create vendor</button>
+</form>
+{% endblock %}

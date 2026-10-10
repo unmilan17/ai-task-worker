@@ -37,10 +37,21 @@ def sandbox():
 def fresh_sandbox(sandbox):
     """Reset ERP state and chaos before a test."""
     httpx.post(f"{sandbox_config.ERP_URL}/__admin/chaos/off")
-    httpx.post(f"{sandbox_config.ERP_URL}/__admin/reset")
+    httpx.post(f"{sandbox_config.ERP_URL}/__admin/reset", params={"seed": "northwind"}, timeout=30)
     yield
     httpx.post(f"{sandbox_config.ERP_URL}/__admin/chaos/off")
     chaos.set_mode("off")
+    chaos.clear_switches()
+
+
+@pytest.fixture
+def centralign_sandbox(sandbox):
+    """The 60-case test-suite fixtures (second seed), no faults."""
+    httpx.post(f"{sandbox_config.ERP_URL}/__admin/chaos/off")
+    httpx.post(f"{sandbox_config.ERP_URL}/__admin/reset", params={"seed": "centralign"}, timeout=30)
+    yield
+    chaos.clear_switches()
+    httpx.post(f"{sandbox_config.ERP_URL}/__admin/reset", params={"seed": "northwind"}, timeout=30)
 
 
 @pytest.fixture

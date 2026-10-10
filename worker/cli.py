@@ -1,6 +1,6 @@
 """Command-line interface.
 
-    python -m worker run "Find the latest invoice from Acme ..."   # run one task in the terminal
+    python -m worker run "<task in plain English>"                 # run one task in the terminal
     python -m worker serve                                         # web dashboard (+ sandbox) on :8000
     python -m worker sandbox [--chaos mild]                        # only the simulated company apps
     python -m worker reset                                         # reset sandbox data
@@ -32,14 +32,16 @@ def sandbox_running() -> bool:
         return False
 
 
-def ensure_sandbox(chaos: str | None = None, reset: bool = False):
-    """Start the sandbox in-process unless it is already running elsewhere."""
+def ensure_sandbox(chaos: str | None = None, reset: bool = False, seed: str | None = None):
+    """Start the sandbox in-process unless it is already running elsewhere; make sure it runs `seed`."""
     servers = None
     if not sandbox_running():
         from sandbox import launcher
-        servers = launcher.start(reset=reset)
-    elif reset:
-        httpx.post(f"{sandbox_config.ERP_URL}/__admin/reset")
+        servers = launcher.start(reset=reset, seed=seed)
+    else:
+        current = httpx.get(f"{sandbox_config.ERP_URL}/__admin/health", timeout=5).json().get("seed")
+        if reset or (seed and seed != current):
+            httpx.post(f"{sandbox_config.ERP_URL}/__admin/reset", params={"seed": seed} if seed else None, timeout=30)
     if chaos:
         httpx.post(f"{sandbox_config.ERP_URL}/__admin/chaos/{chaos}")
     return servers
@@ -84,6 +86,12 @@ def print_event(ev) -> None:
                       + ("[green]PASSED[/]" if v.get("passed") else "[red]FAILED[/]") + f" - {v.get('summary')}")
         for c in v.get("criteria") or []:
             console.print(f"   {'[green]✓' if c.get('met') else '[red]✗'}[/] {c.get('criterion')} [dim]({c.get('evidence')})[/]")
+    elif t == "write_review" and d.get("result") != "ok":
+        console.print(f"  [yellow]🛡 pre-write review ({d['result']}): {d['detail']}[/]")
+    elif t == "circuit_open":
+        console.print(f"  [red]⚡ circuit breaker opened for {d['host']} - the system looks down[/]")
+    elif t == "turn_started":
+        console.rule(f"[bold]FOLLOW-UP (turn {d.get('turn')})[/]")
     elif t == "rate_limit_wait":
         console.print(f"  [dim]⏳ waiting {d['seconds']}s for the free-tier rate limit[/]")
     elif t == "error":
@@ -91,7 +99,7 @@ def print_event(ev) -> None:
 
 
 def print_report(report: dict) -> None:
-    color = {"succeeded": "green", "blocked": "yellow", "needs_review": "yellow"}.get(report["status"], "red")
+    color = {"succeeded": "green", "answered": "green", "blocked": "yellow", "needs_review": "yellow"}.get(report["status"], "red")
     body = f"[bold {color}]{report['status'].upper()}[/] - {report['status_reason']}\n\n{report['summary']}"
     if report.get("notes_for_user"):
         body += "\n\nNotes:\n" + "\n".join(f"• {n}" for n in report["notes_for_user"])
@@ -119,16 +127,30 @@ def cmd_run(args) -> int:
     from worker.runtime.human import CLIHumanChannel
 
     settings = get_settings(headless=not args.headed, model=args.model, effort=args.effort,
-                            slow_mo_ms=300 if args.headed else None)
+                            slow_mo_ms=300 if args.headed else None, profile=args.profile)
     warn_if_no_key(settings)
-    ensure_sandbox(chaos=args.chaos, reset=args.reset)
+    ensure_sandbox(chaos=args.chaos, reset=args.reset, seed=settings.profile)
     llm = make_llm(settings)
-    agent = Agent(llm, settings, CLIHumanChannel(console), on_event=print_event)
-    console.print(Panel(args.task, title=f"Task  [dim](run {agent.run_id}, {settings.llm_provider} · {settings.model})[/]"))
-    report = asyncio.run(agent.run(args.task))
-    print_report(report)
+    interactive = sys.stdin.isatty() and not args.no_follow_up
+    agent = Agent(llm, settings, CLIHumanChannel(console), on_event=print_event, keep_open=interactive)
+    console.print(Panel(args.task, title=f"Task  [dim](run {agent.run_id}, {settings.profile}, "
+                                         f"{settings.llm_provider} · {settings.model})[/]"))
+
+    async def session() -> dict:
+        report = await agent.run(args.task)
+        print_report(report)
+        while interactive and not agent.closed:
+            msg = (await asyncio.to_thread(input, "\nFollow-up (Enter to finish): ")).strip()
+            if not msg:
+                break
+            report = await agent.follow_up(msg)
+            print_report(report)
+        await agent.close()
+        return report
+
+    report = asyncio.run(session())
     console.print(f"Evidence report: [link]{agent.run_dir / 'report.html'}[/]")
-    return 0 if report["status"] == "succeeded" else 1
+    return 0 if report["status"] in ("succeeded", "answered") else 1
 
 
 def cmd_serve(args) -> int:
@@ -137,16 +159,18 @@ def cmd_serve(args) -> int:
     from sandbox.launcher import loopback_sockets
     from worker.server.app import create_app
     from worker.config import get_settings
-    warn_if_no_key(get_settings())
-    ensure_sandbox(chaos=args.chaos)
-    console.print(f"Dashboard: http://localhost:{args.port}")
-    server = uvicorn.Server(uvicorn.Config(create_app(headed=args.headed), log_level="warning"))
+    settings = get_settings(profile=args.profile)
+    warn_if_no_key(settings)
+    ensure_sandbox(chaos=args.chaos, seed=settings.profile)
+    console.print(f"Dashboard: http://localhost:{args.port}  (profile: {settings.profile})")
+    server = uvicorn.Server(uvicorn.Config(create_app(headed=args.headed, profile=args.profile), log_level="warning"))
     server.run(sockets=loopback_sockets(args.port))
     return 0
 
 
 def cmd_sandbox(args) -> int:
-    sys.argv = [sys.argv[0]] + (["--chaos", args.chaos] if args.chaos else [])
+    sys.argv = [sys.argv[0]] + (["--chaos", args.chaos] if args.chaos else []) + (
+        ["--seed", args.seed] if args.seed else [])
     from sandbox import launcher
     launcher.main()
     return 0
@@ -167,6 +191,12 @@ def cmd_eval(args) -> int:
     return eval_main(repeat=args.repeat, only=args.only.split(",") if args.only else None, headed=args.headed)
 
 
+def cmd_suite(args) -> int:
+    from evals.suite.run_suite import main as suite_main
+    return suite_main(only=args.only.split(",") if args.only else None, repeat=args.repeat, short=args.short,
+                      offline=args.offline, headed=args.headed)
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8")   # Windows consoles default to cp1252
@@ -182,16 +212,21 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--reset", action="store_true", help="reset sandbox data first")
     r.add_argument("--model")
     r.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
+    r.add_argument("--profile", choices=["northwind", "centralign"],
+                   help="workplace profile + sandbox seed (default: PROFILE env or northwind)")
+    r.add_argument("--no-follow-up", action="store_true", help="exit after the first answer")
     r.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("serve", help="start the web dashboard (and the sandbox)")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--headed", action="store_true")
     s.add_argument("--chaos", choices=["off", "mild", "hard"])
+    s.add_argument("--profile", choices=["northwind", "centralign"])
     s.set_defaults(fn=cmd_serve)
 
     sb = sub.add_parser("sandbox", help="run only the simulated company apps")
     sb.add_argument("--chaos", choices=["off", "mild", "hard"])
+    sb.add_argument("--seed", choices=["northwind", "centralign"])
     sb.set_defaults(fn=cmd_sandbox)
 
     sub.add_parser("reset", help="reset sandbox data").set_defaults(fn=cmd_reset)
@@ -201,6 +236,14 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--only", help="comma-separated task ids")
     e.add_argument("--headed", action="store_true")
     e.set_defaults(fn=cmd_eval)
+
+    st = sub.add_parser("suite", help="run the 60-case test suite (centralign seed)")
+    st.add_argument("--only", help="comma-separated case ids, e.g. A1,E1,F4")
+    st.add_argument("--repeat", type=int, default=1)
+    st.add_argument("--short", action="store_true", help="A1, D4, E1, F4, G4 only")
+    st.add_argument("--offline", action="store_true", help="only cases that need no LLM (G7, J6)")
+    st.add_argument("--headed", action="store_true")
+    st.set_defaults(fn=cmd_suite)
 
     args = p.parse_args(argv)
     return args.fn(args)

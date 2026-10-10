@@ -8,6 +8,7 @@ agent cannot read or overwrite arbitrary files on the machine.
 from __future__ import annotations
 
 import csv
+import re
 import io
 from pathlib import Path
 from typing import Any
@@ -26,15 +27,36 @@ def safe_path(root: Path, rel: str) -> Path:
     p = (root / rel.replace("\\", "/").lstrip("/")).resolve()
     if p != root and root not in p.parents:
         raise ToolError(ErrorKind.PERMISSION, f"Path '{rel}' is outside the workspace.",
-                        "Use a path relative to the workspace, e.g. 'downloads/INV-1.pdf'.")
+                        "Use a path relative to the workspace, e.g. 'downloads/document.pdf'.")
     return p
+
+
+UNREADABLE_HINT = ("Do not guess any values from it. Look for another copy of the same document (e.g. its HTML page "
+                   "in the system it came from); if there is none, report that the document cannot be read.")
+
+
+def _unreadable(path: Path, e: Exception) -> ToolError:
+    return ToolError(ErrorKind.VALIDATION, f"The PDF '{path.name}' is corrupt or unreadable ({type(e).__name__}).",
+                     UNREADABLE_HINT)
+
+
+def _open_pdf(path: Path) -> PdfReader:
+    try:
+        reader = PdfReader(str(path))
+        _ = len(reader.pages)
+        return reader
+    except Exception as e:  # noqa: BLE001 - pypdf raises many different errors for broken files
+        raise _unreadable(path, e)
 
 
 def read_any(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        reader = PdfReader(str(path))
-        pages = [f"--- page {i + 1} ---\n{(pg.extract_text() or '').strip()}" for i, pg in enumerate(reader.pages)]
+        reader = _open_pdf(path)
+        try:
+            pages = [f"--- page {i + 1} ---\n{(pg.extract_text() or '').strip()}" for i, pg in enumerate(reader.pages)]
+        except Exception as e:  # noqa: BLE001
+            raise _unreadable(path, e)
         return "\n".join(pages)
     if suffix in {".png", ".jpg", ".jpeg", ".gif", ".zip", ".xlsx", ".docx", ".bin"}:
         raise ToolError(ErrorKind.INVALID_INPUT, f"Cannot read binary file type '{suffix}' as text.")
@@ -58,7 +80,8 @@ class FileList(Tool):
 
 class FileRead(Tool):
     name = "file_read"
-    description = "Read a text, CSV, JSON, Markdown or PDF file from the workspace (PDF text is extracted)."
+    description = ("Read a text, CSV, JSON, Markdown or PDF file from the workspace (PDF text is extracted; for a "
+                   "scanned PDF without text, the page image is attached for you to read).")
     input_schema = schema({"path": {"type": "string"}}, ["path"])
 
     async def run(self, args: dict[str, Any], ctx: RunContext) -> ToolResult:
@@ -67,8 +90,26 @@ class FileRead(Tool):
             raise ToolError(ErrorKind.NOT_FOUND, f"File '{args['path']}' not found.",
                             "Use file_list to see which files exist.")
         text = read_any(p)
+        if p.suffix.lower() == ".pdf" and not re.sub(r"--- page \d+ ---", "", text).strip():
+            return _scanned_pdf(p, args["path"], ctx)
         more = f"\n[... truncated at {MAX_READ_CHARS} chars ...]" if len(text) > MAX_READ_CHARS else ""
         return ToolResult.success(f"File: {args['path']}\n---\n{text[:MAX_READ_CHARS]}{more}")
+
+
+def _scanned_pdf(p: Path, rel: str, ctx: RunContext) -> ToolResult:
+    """A PDF with no text layer (a scan): attach the page image so a vision-capable model can read it."""
+    reader = _open_pdf(p)
+    out_dir = ctx.run_dir / "pages"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for i, page in enumerate(reader.pages):
+        for img in page.images:
+            target = out_dir / f"{p.stem}-p{i + 1}.png"
+            img.image.save(target, format="PNG")
+            return ToolResult.success(
+                f"File: {rel}\n---\nThis PDF has no text layer (it is a scanned image). The image of page {i + 1} "
+                f"is attached: read the values from it and record each one with `remember` (source: this document) - text "
+                f"in an image is not searchable later. If you cannot read a value with certainty, say so - do not guess.", image_path=str(target), screenshot=str(target), data={"scanned": True})
+    raise ToolError(ErrorKind.VALIDATION, f"The PDF '{p.name}' contains neither text nor an image.", UNREADABLE_HINT)
 
 
 class FileWrite(Tool):

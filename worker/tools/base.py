@@ -33,6 +33,9 @@ class ErrorKind(str, Enum):
     REJECTED_BY_USER = "rejected_by_user"  # a human said no
     INVALID_INPUT = "invalid_input"  # the tool call itself was malformed
     FATAL = "fatal"                  # unexpected failure, unlikely to be fixed by retrying
+    UNAVAILABLE = "system_unavailable"  # circuit breaker open: a system keeps failing, stop using it
+    UNSOURCED = "unsourced_value"    # pre-write review: a value to be written has no source
+    NEEDS_INPUT = "needs_user_input"  # pre-write review: the choice was ambiguous; the user was asked
 
 
 # What the model is told to do for each class of failure.
@@ -49,6 +52,12 @@ DEFAULT_HINTS: dict[ErrorKind, str] = {
     ErrorKind.REJECTED_BY_USER: "The user declined. Do not attempt the same action again; finish and report the outcome.",
     ErrorKind.INVALID_INPUT: "The tool call was malformed. Check the tool's parameters and call it again correctly.",
     ErrorKind.FATAL: "Unexpected error. Try a different approach; if nothing works, finish with status 'failed'.",
+    ErrorKind.UNAVAILABLE: "This system is down. Do not retry it. Finish with status 'failed' and report what failed, "
+                           "what you tried, the current state, and the values you already extracted.",
+    ErrorKind.UNSOURCED: "Never write invented values. Read the value from the source document, compute it with a "
+                         "tool (convert_amount, convert_date, due_date_from_terms, calculate), or ask the user. If "
+                         "you read it from an image (a scanned PDF), record it with `remember` first.",
+    ErrorKind.NEEDS_INPUT: "Nothing was written. Use the user's answer to choose the right record/value, then try again.",
 }
 
 

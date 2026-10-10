@@ -30,7 +30,8 @@ def _rel(path: str | None, base: Path) -> str | None:
 
 def build_report(*, run_id: str, run_dir: Path, task: str, status: str, status_reason: str,
                  claim: dict[str, Any] | None, spec: dict[str, Any] | None, verdicts: list[dict[str, Any]],
-                 ctx, events: list, llm, started: float, finished: float, model: str) -> dict[str, Any]:
+                 ctx, events: list, llm, started: float, finished: float, model: str,
+                 turns: list[dict[str, Any]] | None = None, actions_from: int = 0) -> dict[str, Any]:
     ev_types = [e.type for e in events]
     tool_failures: dict[str, int] = {}
     for e in events:
@@ -66,7 +67,9 @@ def build_report(*, run_id: str, run_dir: Path, task: str, status: str, status_r
         "spec": spec,
         "plan": ctx.plan.as_list(),
         "facts": [{**f, "screenshot": _rel(f.get("screenshot"), run_dir)} for f in ctx.memory.as_list()],
-        "actions": [{**a, "screenshot": _rel(a.get("screenshot"), run_dir)} for a in ctx.actions],
+        "actions": [{**a, "screenshot": _rel(a.get("screenshot"), run_dir)} for a in ctx.actions[actions_from:]],
+        "turns": turns or [],
+        "write_reviews": list(getattr(ctx.reviewer, "log", []) or []),
         "human_interactions": clarifications,
         "approvals": ctx.guard.decisions,
         "reliability": {

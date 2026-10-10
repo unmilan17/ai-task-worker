@@ -2,11 +2,11 @@
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 <h2>Dashboard</h2>
-<p>{{ n_bills }} bills on file. Open (unpaid) total: <b>{{ "{:,.2f}".format(open_total) }} USD</b></p>
+<p>{{ n_bills }} bills on file, {{ n_open }} not yet paid.</p>
 <p><a class="btn" href="/bills/new">+ New bill</a></p>
 <h3>Recently added bills</h3>
 <table>
 <tr><th>Bill</th><th>Vendor</th><th>Invoice #</th><th>Due date</th><th class="num">Amount</th><th>Status</th></tr>
-{% for r in recent %}<tr><td><a href="/bills/{{ r.bill_id }}">{{ r.bill_id }}</a></td><td>{{ r.vendor_name }}</td><td>{{ r.invoice_number }}</td><td>{{ r.due_date }}</td><td class="num">{{ r.amount_cents | cents }} {{ r.currency }}</td><td>{{ r.status }}</td></tr>{% endfor %}
+{% for r in recent %}<tr><td><a href="/bills/{{ r.bill_id }}">{{ r.bill_id }}</a></td><td>{{ r.vendor_name }}</td><td>{{ r.invoice_number }}</td><td>{{ r.due_date }}</td><td class="num">{{ r.amount_cents | cents(r.currency) }} {{ r.currency }}</td><td>{{ r.status }}</td></tr>{% endfor %}
 </table>
 {% endblock %}

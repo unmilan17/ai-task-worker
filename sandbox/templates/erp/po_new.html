@@ -1,0 +1,24 @@
+{% extends "erp/base.html" %}
+{% block title %}Record purchase order{% endblock %}
+{% block content %}
+<h2>Record purchase order</h2>
+{% if errors %}<div class="alert" role="alert">Not saved. Please correct the highlighted fields.</div>{% endif %}
+<form method="post" action="/purchase-orders/new">
+  <div class="field"><label for="po_number">PO number</label><input id="po_number" name="po_number" value="{{ form.po_number or '' }}">
+    {% if errors.po_number %}<div class="err">{{ errors.po_number }}</div>{% endif %}</div>
+  {% if vendor_field == "id" %}
+  <div class="field"><label for="vendor_id">Vendor ID</label><input id="vendor_id" name="vendor_id" value="{{ form.vendor_id or '' }}" placeholder="e.g. V-0001">
+    <div class="hint">Vendor IDs are listed in the <a href="/vendors">Vendor directory</a>.</div>
+  {% else %}
+  <div class="field"><label for="vendor_id">Vendor</label>
+    <select id="vendor_id" name="vendor_id"><option value="">-- select vendor --</option>
+      {% for v in vendors %}<option value="{{ v.vendor_id }}" {% if v.vendor_id == form.vendor_id %}selected{% endif %}>{{ v.name }} ({{ v.vendor_id }})</option>{% endfor %}
+    </select>
+  {% endif %}
+    {% if errors.vendor_id %}<div class="err">{{ errors.vendor_id }}</div>{% endif %}</div>
+  <div class="field"><label for="delivery_date">Delivery date</label><input id="delivery_date" name="delivery_date" value="{{ form.delivery_date or '' }}" placeholder="YYYY-MM-DD">
+    {% if errors.delivery_date %}<div class="err">{{ errors.delivery_date }}</div>{% endif %}</div>
+  <div class="field"><label for="notes">Notes (optional)</label><input id="notes" name="notes" value="{{ form.notes or '' }}"></div>
+  <button type="submit">Save purchase order</button>
+</form>
+{% endblock %}

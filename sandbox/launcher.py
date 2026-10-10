@@ -46,23 +46,24 @@ def _serve(app, port: int) -> uvicorn.Server:
     return serve_in_thread(app, port, f"sandbox-{port}")
 
 
-def start(reset: bool = True) -> list[uvicorn.Server]:
+def start(reset: bool = True, seed: str | None = None) -> list[uvicorn.Server]:
     """Start the sandbox in background threads (used by the CLI, tests and evals)."""
-    from . import erp, mail, supplierhub
+    from . import erp, helpdesk, mail, supplierhub
 
-    if reset:
-        state.reset()
+    if reset or seed:
+        state.reset(seed_name=seed)
     else:
         state.current_seed()
     servers = [
         _serve(supplierhub.app, config.SUPPLIERHUB_PORT),
         _serve(erp.app, config.ERP_PORT),
         _serve(mail.app, config.MAIL_PORT),
+        _serve(helpdesk.app, config.HELPDESK_PORT),
     ]
     deadline = time.time() + 15
     while not all(s.started for s in servers):
         if time.time() > deadline:
-            raise RuntimeError("Sandbox servers did not start (are ports 8001-8003 free?)")
+            raise RuntimeError("Sandbox servers did not start (are ports 8001-8004 free?)")
         time.sleep(0.05)
     return servers
 
@@ -76,15 +77,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the simulated company environment")
     parser.add_argument("--no-reset", action="store_true", help="keep existing ERP state")
     parser.add_argument("--chaos", choices=["off", "mild", "hard"], default=None)
+    parser.add_argument("--seed", choices=list(state.SEEDS), default=None,
+                        help="northwind (default) or centralign (the 60-case test-suite fixtures)")
     args = parser.parse_args()
     if args.chaos:
         from .chaos import chaos
         chaos.set_mode(args.chaos)
-    start(reset=not args.no_reset)
+    start(reset=not args.no_reset, seed=args.seed)
     print("Sandbox running:")
     print(f"  SupplierHub  {config.SUPPLIERHUB_URL}")
     print(f"  ERP          {config.ERP_URL}   (API docs: {config.ERP_URL}/api/docs)")
     print(f"  Webmail      {config.MAIL_URL}")
+    print(f"  HelpDesk     {config.HELPDESK_URL}")
+    print(f"  Seed: {state.current_seed().name}")
     print("Press Ctrl+C to stop.")
     try:
         while True:

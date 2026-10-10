@@ -26,6 +26,7 @@ from ..runtime.loop_detector import LoopDetector
 from .prompts import NUDGE_NO_TOOL
 
 MAX_NUDGES = 3
+MAX_SUMMARY_WORDS = 100
 
 
 class BudgetExceeded(Exception):
@@ -45,10 +46,10 @@ class Budget:
     steps: int = 0
     warned: bool = False
 
-    def check(self) -> None:
+    def check(self, count_steps: bool = True) -> None:
         if self.cancel.is_set():
             raise Cancelled("The run was cancelled by the user.")
-        if self.steps >= self.settings.max_steps:
+        if count_steps and self.steps >= self.settings.max_steps:
             raise BudgetExceeded(f"step budget exhausted ({self.settings.max_steps} tool calls)")
         if time.time() - self.started > self.settings.max_minutes * 60:
             raise BudgetExceeded(f"time budget exhausted ({self.settings.max_minutes} minutes)")
@@ -73,8 +74,12 @@ class ToolLoop:
         self.terminal_tool = terminal_tool
         self.label = label
         self.max_steps = max_steps          # optional per-loop cap (verifier)
+        # The verifier has its own step cap (max_steps) and does not eat into the executor's step budget,
+        # so a long but correct execution can still be verified. Time, cost and cancel still apply.
+        self.counts_steps = max_steps is None
         self.detector = LoopDetector()
         self.local_steps = 0
+        self.summary_rejections = 0
 
     async def start(self, kickoff: str) -> tuple[ToolCall, list[ToolOutcome]]:
         return await self._run(user_text=kickoff, outcomes=[])
@@ -87,7 +92,7 @@ class ToolLoop:
         notes: list[str] = []
         nudges = 0
         while True:
-            self.budget.check()
+            self.budget.check(self.counts_steps)
             turn = await self.conv.send(user_text=user_text, tool_outcomes=outcomes, notes=notes)
             user_text, outcomes, notes = None, [], []
             ctx.events.emit("llm_turn", step=ctx.step, loop=self.label, thoughts=turn.thoughts, text=turn.text,
@@ -108,19 +113,30 @@ class ToolLoop:
                     outcomes.append(ToolOutcome(call.id, f"Not executed: '{self.terminal_tool}' was already called."))
                     continue
                 if call.name == self.terminal_tool:
+                    problem = self._check_terminal(call)
+                    if problem:
+                        outcomes.append(ToolOutcome(call.id, problem, is_error=True))
+                        continue
                     terminal = call
                     outcomes.append(ToolOutcome(call.id, "Received."))
                     continue
-                self.budget.check()
+                self.budget.check(self.counts_steps)
                 if self.max_steps is not None and self.local_steps >= self.max_steps:
                     raise BudgetExceeded(f"{self.label} step limit ({self.max_steps}) reached")
-                self.budget.steps += 1
+                if self.counts_steps:
+                    self.budget.steps += 1
                 self.local_steps += 1
                 ctx.step += 1
                 result = await self.executor.execute(call)
                 outcomes.append(ToolOutcome(call.id, result.render_for_model(), is_error=not result.ok,
                                             image_path=result.image_path))
                 note = self.detector.observe(call, result)
+                if result.side_effect and ctx.repeated_writes() >= 2:
+                    note = (f"REPEATED WRITE: you have now successfully submitted the same values "
+                            f"{ctx.repeated_writes()} times. If the record still does not appear afterwards, the "
+                            f"system is accepting but not saving the data (or you are creating duplicates). Do NOT "
+                            f"submit it again: check once more, then finish with status 'failed' and explain what "
+                            f"happened, so a person can follow up.")
                 if note:
                     ctx.events.emit("reflection", step=ctx.step, loop=self.label, note=note)
                     notes.append(note)
@@ -129,3 +145,14 @@ class ToolLoop:
             warn = self.budget.warning()
             if warn:
                 notes.append(warn)
+
+    def _check_terminal(self, call: ToolCall) -> str | None:
+        """Light contract checks on `finish` (the user-facing message). Each is enforced at most twice."""
+        if call.name != "finish" or self.summary_rejections >= 2:
+            return None
+        words = len(str(call.args.get("summary", "")).split())
+        if words > MAX_SUMMARY_WORDS:
+            self.summary_rejections += 1
+            return (f"ERROR [invalid_input]: the summary has {words} words; the limit is {MAX_SUMMARY_WORDS}. "
+                    "Call finish again with a shorter summary (put details in evidence / notes_for_user).")
+        return None

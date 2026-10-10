@@ -16,7 +16,12 @@
         <option value="off">off</option><option value="mild">mild</option><option value="hard">hard</option>
       </select>
     </label>
-    <button id="reset" class="ghost" title="Reset sandbox data to the seed state">Reset data</button>
+    <label>Fault
+      <select id="fault" title="Turn on one named fault switch (sandbox/chaos.py) for the next run">
+        <option value="">none</option>
+      </select>
+    </label>
+    <button id="reset" class="ghost" title="Reset sandbox data to the seed state (also clears fault switches)">Reset data</button>
   </div>
 </header>
 
@@ -24,7 +29,7 @@
   <aside class="sidebar">
     <section class="panel">
       <h2>New task</h2>
-      <textarea id="task" rows="5" placeholder="Describe what you need done, e.g. 'Find the latest invoice from Acme and enter it into the ERP'"></textarea>
+      <textarea id="task" rows="5" placeholder="Describe what you need done, e.g. 'Find the latest invoice from a supplier and enter it into the finance system'"></textarea>
       <button id="run" class="primary">Run task</button>
       <p id="keywarn" class="warn hidden">No API key found. Set it in .env and restart.</p>
       <div class="samples" id="samples"></div>

@@ -18,9 +18,9 @@ class Remember(Tool):
                    "where you found it. Saved facts are used for verification and the final report, so record "
                    "every value you will rely on.")
     input_schema = schema({
-        "key": {"type": "string", "description": "Short identifier, e.g. 'acme_invoice.due_date'"},
+        "key": {"type": "string", "description": "Short identifier, e.g. 'invoice.due_date'"},
         "value": {"type": "string"},
-        "source": {"type": "string", "description": "Where it came from, e.g. 'SupplierHub page for INV-123'"},
+        "source": {"type": "string", "description": "Where it came from, e.g. 'invoice detail page in the supplier portal'"},
     }, ["key", "value", "source"])
 
     async def run(self, args: dict[str, Any], ctx: RunContext) -> ToolResult:
@@ -107,20 +107,26 @@ class Finish(Tool):
 
     name = "finish"
     description = ("Call when you are done (or cannot continue). Your claim is then independently verified "
-                   "against the real systems before the user sees it. 'summary' is the concise message for the "
-                   "user. 'evidence' lists the concrete proof (record IDs, values, where you saw them).")
+                   "against the real systems before the user sees it. 'summary' is the message for the user: at "
+                   "most 100 words, stating the key facts (record IDs, amounts, dates, where it was entered). If "
+                   "you did not finish, the summary must say what failed, what you tried, the current state of the "
+                   "systems (what was and was not changed) and what the user should do next. 'evidence' lists "
+                   "concrete proof (record IDs, values, where you confirmed them).")
     input_schema = schema({
-        "status": {"type": "string", "enum": ["completed", "blocked", "failed"],
-                   "description": "completed = goal achieved; blocked = needs the user (declined/ambiguous); "
-                                  "failed = could not achieve it"},
-        "summary": {"type": "string"},
+        "status": {"type": "string", "enum": ["completed", "no_action_needed", "blocked", "failed"],
+                   "description": "completed = goal achieved by changes you made; no_action_needed = the goal was "
+                                  "already true or there was nothing to do (e.g. the record already exists, nothing "
+                                  "found to process), so nothing was changed; blocked = needs the user (declined/"
+                                  "ambiguous/missing information); failed = could not achieve it"},
+        "summary": {"type": "string", "description": "At most 100 words."},
         "evidence": {"type": "array", "items": {
             "type": "object",
             "properties": {"claim": {"type": "string"}, "proof": {"type": "string"}},
             "required": ["claim", "proof"],
         }},
         "notes_for_user": {"type": "array", "items": {"type": "string"},
-                           "description": "Anything the user should know: assumptions, anomalies, suggested follow-ups"},
+                           "description": "Assumptions (e.g. 'due date computed from Net 30 terms'), anomalies, "
+                                          "suspicious content, values extracted but not entered, follow-ups"},
     }, ["status", "summary"])
     verifier_allowed = False
 

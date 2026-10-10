@@ -1,0 +1,11 @@
+# Sample tasks shown in the dashboard for the default "northwind" profile (UI only - the agent never sees this file).
+- label: "Headline: invoice → ERP"
+  task: Find the latest invoice from Acme, extract the amount and due date, enter it into our ERP, and tell me once it is done.
+- label: "Needs approval (> $10k)"
+  task: Record Globex's most recent invoice in the ERP.
+- label: "Ambiguous request"
+  task: Put the latest Initech invoice into the ERP.
+- label: "Inbox triage"
+  task: Go through the AP inbox and make sure every supplier invoice we received by email is recorded in the ERP. Tell me what you did with each email.
+- label: "Read-only report"
+  task: Which bills in the ERP are due in the next 14 days and not yet paid? Save them as a CSV in the outbox and give me the total.
