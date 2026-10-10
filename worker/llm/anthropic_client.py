@@ -50,6 +50,9 @@ class AnthropicClient(LLMClient):
         self.refusal_fallback = refusal_fallback
         self.max_tokens = max_tokens
 
+    async def aclose(self) -> None:
+        await self.client.close()
+
     def conversation(self, system: str, tools: list[dict[str, Any]], purpose: str = "executor") -> Conversation:
         return _AnthropicConversation(self, system, tools)
 

@@ -284,6 +284,9 @@ class OpenAICompatClient(LLMClient):
     def conversation(self, system: str, tools: list[dict[str, Any]], purpose: str = "executor") -> Conversation:
         return _CompatConversation(self, system, tools)
 
+    async def aclose(self) -> None:
+        await self.client.close()
+
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None):
         if self.key_missing:
             raise LLMError(f"No API key for '{self.provider}': set {self.preset.key_env} in .env "

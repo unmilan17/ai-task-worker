@@ -96,6 +96,9 @@ class LLMClient(ABC):
     async def structured(self, system: str, prompt: str, schema: type[T]) -> T:
         """One-shot call returning a validated instance of ``schema``."""
 
+    async def aclose(self) -> None:
+        """Release network connections while the event loop is still running (default: nothing to do)."""
+
 
 # USD per million tokens: (input, output, cache_read, cache_write). Approximate list prices.
 PRICES: dict[str, tuple[float, float, float, float]] = {

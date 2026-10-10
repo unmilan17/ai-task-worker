@@ -53,6 +53,10 @@ class FallbackClient(LLMClient):
         for c in self.clients:
             c.on_wait = fn
 
+    async def aclose(self) -> None:
+        for c in self.clients:
+            await c.aclose()
+
     def chain(self) -> list[str]:
         return [f"{c.provider}:{c.model}" for c in self.clients]
 

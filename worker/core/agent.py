@@ -49,6 +49,17 @@ def new_run_id() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
 
 
+def _action_label(action: dict[str, Any]) -> str:
+    """'Submitted form on .../new (invoice_number=X-1)': which record a change was about."""
+    data = action.get("fields") or action.get("request") or {}
+    if not isinstance(data, dict):
+        return action["description"]
+    keys = ([k for k in data if re.search(r"(number|name|title|subject)$", k, re.I)]
+            or [k for k in data if re.search(r"(^|_)id$", k, re.I)])
+    ident = ", ".join(f"{k}={data[k]}" for k in keys[:2] if data[k] not in (None, ""))
+    return f"{action['description']} ({ident})" if ident else action["description"]
+
+
 def is_unclear(text: str) -> bool:
     """Deterministic sanity check: empty input or a single word with no digits ('asdf')."""
     words = re.findall(r"[A-Za-z]{2,}", text or "")
@@ -111,6 +122,10 @@ class Agent:
         if self.ctx.browser is not None:
             await self.ctx.browser.close()
         await self.ctx.aclose()
+        try:
+            await self.llm.aclose()
+        except Exception:                      # closing must never mask the run's result
+            pass
 
     # ------------------------------------------------------------------ one turn
     async def _turn(self, text: str, follow_up: bool) -> dict[str, Any]:
@@ -237,7 +252,7 @@ class Agent:
     # ------------------------------------------------------------------ helpers
     def _stopped_summary(self, why: str, actions_from: int) -> str:
         """A useful message when a budget stops the run before the worker could report (no extra LLM call)."""
-        changes = [a["description"] for a in self.ctx.actions[actions_from:]]
+        changes = [_action_label(a) for a in self.ctx.actions[actions_from:]]
         facts = self.ctx.memory.recall()
         parts = [f"I stopped before finishing: {why}."]
         parts.append(f"Changes made: {'; '.join(changes)}." if changes else "No data was changed.")

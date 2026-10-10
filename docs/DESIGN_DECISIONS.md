@@ -332,3 +332,42 @@ built from the run's record. The verifier has its own step cap (25) that does no
 **Why (live E1 and F1 re-runs):** in E1 the status was correctly `failed`, but the summary still said "recorded as
 B-1003" (the executor's false claim). Status and message must never disagree. In F1 a long but correct execution
 used 55 of 60 shared steps, so verification ran out of budget and a correct result was reported as a failure.
+
+### D25. The worker's own echoes are not a source; "use your judgement" does not supply a value
+**Choice:** the provenance check's corpus leaves out the outputs of tools that only echo what the worker itself
+entered (`browser_type`, `browser_select`: "Typed '2026-10-05' into element 13"). The pre-write reviewer is told
+that a delegating answer ("use your best judgement", "proceed") can settle a choice between candidates, but
+never a value that appears in no source. The executor prompt says the same, and the reviewer's "held" message
+carries a hint for missing values: if the answer does not state the value, do not assume one.
+
+**Why (live D7, corrupt-pdf switch):** the only document with Globex's payment terms was unreadable. The worker
+typed an assumed due date (+30 days) into the form. The provenance check passed because the corpus contained the
+worker's own "Typed '2026-10-05'" message. The reviewer then flagged the assumption and asked the user. The
+scripted user replied "Please proceed with your best judgement", and the reviewer treated that as permission.
+Result: a bill with an invented due date, reported as verified (silent damage). Both holes are generic: any
+value the agent typed was "sourced" by its own typing, and any vague reply unlocked any guess.
+
+### D26. Fill a whole form in one call
+**Choice:** `browser_fill_form(fields=[{ref, value}...], submit_ref=?)` fills text fields and dropdowns and
+optionally clicks the submit button. The submit goes through exactly the same policy/review path as
+`browser_click`, and it is never auto-retried.
+
+**Why (live E4: twelve similar bills, one rejected):** one tool call per field cost about 9 steps per bill, so
+the 60-step budget ran out after 3 of 4 bills. That was an honest stop, but too slow. Batching the fields is the
+generic fix (the budget still protects against loops). The budget-stop summary now also names the record each
+change was about (`invoice_number=INV-W-08`), not just "Submitted form" three times.
+
+### D27. A deterministic "which one did you mean?" check before the LLM reviewer
+**Choice:** before the LLM ambiguity review, `name_collisions()` looks at every write that references an entity by
+ID (`vendor_id=V-…`). It takes the names in the request (runs of capitalised words, e.g. "Acme" or "Acme Corp")
+and finds the table rows the worker saw that contain that name as whole words and exactly one ID of the same
+kind. If two or more different IDs match, the system asks the user ("Which one did you mean: Acme Corp (V-0017)
+or Acme Corporation Pvt Ltd (V-0018)?") and holds the write. It does not ask if the user already answered with one
+of the candidates.
+
+**Why (live F1 on the fallback model):** with `gemini-3.1-flash-lite` the LLM reviewer was shown both Acme rows
+and still called the choice "not ambiguous", so the bill went to the wrong vendor (silent damage). Name
+collisions are a common, mechanical pattern, so they should not depend on how strong the model is. Two rules
+keep false alarms away: whole-word matching ("Acme Corp" does not match "Acme Corporation") and one-ID-per-line
+(a dropdown that lists every vendor on one line is ignored). The LLM reviewer still covers the cases that need
+judgement (ambiguous dates, missing values, ties on "latest").

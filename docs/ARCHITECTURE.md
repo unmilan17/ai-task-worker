@@ -169,7 +169,7 @@ metadata**: `ok`, `error_kind` (an `ErrorKind` enum), `hint`, `screenshot`, `sid
 
 | Group | Tools |
 |---|---|
-| Browser (Playwright) | `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_select`, `browser_extract_text`, `browser_back`, `browser_screenshot`, `browser_download` |
+| Browser (Playwright) | `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_select`, `browser_fill_form`, `browser_extract_text`, `browser_back`, `browser_screenshot`, `browser_download` |
 | Files (sandboxed to `workspace/`) | `file_list`, `file_read` (PDF text extraction), `file_write` (text or CSV rows) |
 | APIs | `http_request` (allow-listed hosts, secret placeholders in headers/body) |
 | Exact conversions | `convert_amount`, `convert_date` (flags ambiguous dates), `due_date_from_terms`, `calculate` |

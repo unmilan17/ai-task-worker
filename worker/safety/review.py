@@ -80,16 +80,23 @@ It is NOT ambiguous when the request plus observations determine the choice (one
 latest date, an explicit document number, a value computed from stated terms), or when the user has
 already answered the question. Ordinary work (formatting dates, converting currency symbols, looking up
 an ID in a directory) is not ambiguity. Be strict: when in doubt, it is NOT ambiguous.
+An answer that only delegates ("use your best judgement", "go ahead", "proceed") resolves a choice between
+candidates the worker had listed, but it does NOT supply a missing_value: a value that appears in no source
+is still missing unless the user stated it or explicitly confirmed that exact value.
 
 If ambiguous, list the concrete candidates (at least two for multiple_candidates/ambiguous_value; the
 missing field for missing_value) and write ONE short question for the user."""
+
+
+# Tools whose output only echoes free text the worker itself typed - not a source ("Typed '<value>' into element 13").
+_ECHO_TOOLS = {"browser_type"}          # a dropdown choice is page data: its value comes from the page
 
 
 def _corpus(ctx: "RunContext") -> str:
     """Everything the worker read, was told, or computed in this run."""
     parts = [ctx.task_text]
     for e in ctx.events.history:
-        if e.type == "tool_result" and e.data.get("output"):
+        if e.type in ("tool_result", "observation") and e.data.get("output") and e.data.get("name") not in _ECHO_TOOLS:
             parts.append(str(e.data["output"]))
         elif e.type == "human_response":
             parts.append(str(e.data.get("response", {}).get("answer", "")))
@@ -124,6 +131,59 @@ def evidence_lines(task: str, outputs: list[str], limit: int = MAX_EVIDENCE_LINE
             if ln and ln not in seen and any(t in ln.lower() for t in terms):
                 seen[ln] = None
     return list(seen)[:limit]
+
+
+_MONTHS = {"january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+           "november", "december"}
+_ID_VALUE = re.compile(r"^([A-Za-z]{1,6}-?)\d{2,}$")
+
+
+def name_phrases(task: str) -> list[str]:
+    """Runs of capitalised words that name something: 'Find ... from Contoso Ltd, ...' -> ['Contoso Ltd'];
+    "Log Fabrikam Inc's latest invoice" -> ['Fabrikam Inc']. A possessive ends a name."""
+    phrases, cur = [], []
+    for i, m in enumerate(re.finditer(r"[A-Za-z][A-Za-z0-9&.-]*('s|')?", task or "")):
+        word = m.group(0)
+        base = re.sub(r"('s|')$", "", word).rstrip(".")
+        named = i > 0 and base[:1].isupper() and base.lower() not in _GENERIC | _MONTHS and len(base) >= 2
+        if named:
+            cur.append(base)
+        if cur and (not named or word != base):
+            phrases.append(" ".join(cur))
+            cur = []
+    if cur:
+        phrases.append(" ".join(cur))
+    return list(dict.fromkeys(phrases))
+
+
+def name_collisions(task: str, fields: dict[str, Any], outputs: list[str]) -> list[str]:
+    """Deterministic 'which one did you mean?' check for a write that references an entity by ID (vendor_id=...).
+
+    If the name the user gave matches rows for two or more different IDs of the same kind (Contoso -> X-0101 and
+    X-0102), return a label per candidate. Only lines with exactly one ID of that kind count (a table row), so a
+    dropdown listing every vendor on one line cannot create a false alarm. Whole words only: 'Contoso Ltd' does not
+    match 'Contoso Ltda'."""
+    phrases = name_phrases(task)
+    refs = [(k, str(v)) for k, v in _flatten(fields) if re.search(r"(^|_)id$", k.split(".")[-1], re.I)
+            and _ID_VALUE.match(str(v).strip())]
+    for _, value in refs:
+        family = re.compile(r"\b" + re.escape(_ID_VALUE.match(value.strip()).group(1)) + r"\d{2,}\b")
+        for phrase in phrases:
+            pat = re.compile(r"\b" + r"\s+".join(map(re.escape, phrase.split())) + r"\b", re.I)
+            found: dict[str, str] = {}
+            for out in outputs:
+                for line in out.splitlines():
+                    ids = set(family.findall(line))
+                    if len(ids) != 1 or not pat.search(line):
+                        continue
+                    eid = ids.pop()
+                    cells = [c.strip() for c in re.split(r"\||\t", line) if pat.search(c)]
+                    name = re.sub(r"\s*\(" + re.escape(eid) + r"\)", "", cells[0] if cells else phrase).strip()
+                    if eid not in found or len(name) < len(found[eid]):
+                        found[eid] = name[:80]
+            if len(found) >= 2:
+                return [f"{name} ({eid})" for eid, name in sorted(found.items())]
+    return []
 
 
 def _flatten(d: Any, prefix: str = ""):
@@ -165,6 +225,19 @@ def unsourced_values(fields: dict[str, Any], corpus: str) -> list[tuple[str, str
     return missing
 
 
+def _answered(ctx: "RunContext", candidates: list[str]) -> bool:
+    """True if the user already answered with one of the candidates (by name or ID) in this run."""
+    answers = [str(e.data.get("response", {}).get("answer") or "") for e in ctx.events.history
+               if e.type == "human_response"]
+    for cand in candidates:
+        m = re.match(r"(.*) \(([^)]*)\)$", cand)
+        name, eid = (m.group(1), m.group(2)) if m else (cand, "")
+        for a in answers:
+            if (eid and eid.lower() in a.lower()) or re.search(r"\b" + re.escape(name) + r"\b", a, re.I):
+                return True
+    return False
+
+
 class WriteReviewer:
     def __init__(self, llm: LLMClient | None, provenance: bool = True, ambiguity: bool = True) -> None:
         self.llm = llm
@@ -185,7 +258,19 @@ class WriteReviewer:
                 raise ToolError(ErrorKind.UNSOURCED,
                                 f"Write blocked before it ran: these values do not appear in anything you read, "
                                 f"were told, or computed with a tool: {listing}.")
-        if not self.ambiguity or self.reviews >= MAX_REVIEWS_PER_RUN or self.clarifications >= MAX_CLARIFICATIONS_PER_RUN:
+        if self.clarifications >= MAX_CLARIFICATIONS_PER_RUN:
+            return
+        if action.fields:
+            outputs = [str(e.data["output"]) for e in ctx.events.history
+                       if e.type in ("tool_result", "observation") and e.data.get("output") and e.data.get("name") not in _ECHO_TOOLS]
+            cands = name_collisions(ctx.task_text, action.fields, outputs)
+            if cands and not _answered(ctx, cands):
+                verdict = WriteReview(ambiguous=True, kind="multiple_candidates", candidates=cands,
+                                      question=f"Which one did you mean: {' or '.join(cands)}?",
+                                      explanation=f"the name in the request matches {len(cands)} different records: "
+                                                  + ", ".join(cands))
+                await self._hold(ctx, action, verdict)
+        if not self.ambiguity or self.reviews >= MAX_REVIEWS_PER_RUN:
             return
         self.reviews += 1
         verdict = await self._ask_reviewer(action, ctx, corpus)
@@ -196,6 +281,10 @@ class WriteReviewer:
         if not concrete or not verdict.question.strip():
             self._record(ctx, action, "ok", f"vague concern ignored: {verdict.explanation}")
             return
+        await self._hold(ctx, action, verdict)
+
+    async def _hold(self, ctx: "RunContext", action: "ProposedAction", verdict: WriteReview) -> None:
+        """Ask the user the reviewer's question, then raise so the write does not run with a guess."""
         self.clarifications += 1
         self._record(ctx, action, "ambiguous", verdict.explanation)
         req = HumanRequest(kind="clarification", question=verdict.question, options=verdict.candidates[:4],
@@ -210,7 +299,9 @@ class WriteReviewer:
                             "Do not guess. Finish with status 'blocked' and explain what you need.")
         raise ToolError(ErrorKind.NEEDS_INPUT,
                         f"Not written yet: a pre-write review found the choice ambiguous ({verdict.explanation}). "
-                        f"The user was asked: {verdict.question!r} and answered: {resp.answer!r}.")
+                        f"The user was asked: {verdict.question!r} and answered: {resp.answer!r}.",
+                        "If the answer does not state the missing value itself, do not assume one: finish and "
+                        "report what is missing." if verdict.kind == "missing_value" else None)
 
     async def _ask_reviewer(self, action: "ProposedAction", ctx: "RunContext", corpus: str) -> WriteReview | None:
         outputs = [str(e.data["output"]) for e in ctx.events.history if e.type == "tool_result" and e.data.get("output")]

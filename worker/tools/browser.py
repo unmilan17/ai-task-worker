@@ -347,6 +347,62 @@ class BrowserSelect(Tool):
         return ToolResult.success(f"Selected {opt!r} (value {chosen}) in element {args['ref']}.")
 
 
+class BrowserFillForm(Tool):
+    name = "browser_fill_form"
+    description = ("Fill several fields of a form in ONE call (text inputs, textareas and dropdowns), then optionally "
+                   "click its submit button. Prefer this over one browser_type per field. Dropdowns take the visible "
+                   "option text. {{secret:name}} placeholders work as in browser_type. The submit click is checked by "
+                   "company policy exactly like browser_click.")
+    input_schema = schema({
+        "fields": {"type": "array", "description": "The fields to fill, in order",
+                   "items": {"type": "object", "properties": {"ref": {"type": "integer"}, "value": {"type": "string"}},
+                             "required": ["ref", "value"]}},
+        "submit_ref": {"type": "integer", "description": "Ref of the button to click after filling (optional)"},
+    }, ["fields"])
+
+    def is_idempotent(self, args: dict[str, Any]) -> bool:
+        return args.get("submit_ref") is None     # a submit may create a record - never auto-retry it
+
+    async def run(self, args: dict[str, Any], ctx: RunContext) -> ToolResult:
+        fields = args.get("fields") or []
+        if not fields and args.get("submit_ref") is None:
+            raise ToolError(ErrorKind.INVALID_INPUT, "No fields given.")
+        filled: list[str] = []
+        selected: list[str] = []          # dropdown choices are page data (their value comes from the page)
+        for f in fields:
+            ref = f.get("ref")
+            try:
+                page, loc = await _locate(ctx, ref)
+                info = await page.evaluate(_ACTION_INFO_JS, int(ref))
+                if not info or not info.get("isField"):
+                    raise ToolError(ErrorKind.INVALID_INPUT, f"Element {ref} is not a form field.")
+                if info.get("tag") == "SELECT":
+                    res = await BrowserSelect().run({"ref": ref, "option": str(f.get("value", ""))}, ctx)
+                    selected.append(res.output)
+                else:
+                    try:
+                        value = ctx.vault.resolve(str(f.get("value", "")))
+                    except KeyError as e:
+                        raise ToolError(ErrorKind.INVALID_INPUT, str(e))
+                    await loc.fill(value, timeout=10000)
+            except ToolError as e:
+                done = f" Already filled: refs {', '.join(filled)}." if filled else ""
+                raise ToolError(e.kind, f"Field ref {ref}: {e.message}{done} Nothing was submitted.", e.hint)
+            filled.append(str(ref))
+        note = " ".join([f"Filled {len(filled)} field(s): refs {', '.join(filled) or '-'}.", *selected])
+        if args.get("submit_ref") is None:
+            return ToolResult.success(note + " Not submitted yet.")
+        if selected:     # the pre-write review runs before this call's result is recorded: let it see the choices
+            ctx.events.emit("observation", step=ctx.step, name=self.name, output=" ".join(selected))
+        page, loc = await _locate(ctx, args["submit_ref"])
+        info = await page.evaluate(_ACTION_INFO_JS, int(args["submit_ref"]))
+        await _authorize_click(ctx, info)
+        label = f"click {info.get('text') or info.get('tag', 'element')}"
+        result = await _perform_page_action(ctx, label, lambda: loc.click(timeout=6000), info)
+        result.output = note + " Then clicked submit.\n" + (result.output or "")
+        return result
+
+
 class BrowserExtractText(Tool):
     name = "browser_extract_text"
     description = "Return the full visible text of the current page (no element refs). Useful for long documents."
@@ -425,4 +481,4 @@ class BrowserDownload(Tool):
 
 
 BROWSER_TOOLS: list[type[Tool]] = [BrowserNavigate, BrowserSnapshot, BrowserClick, BrowserType, BrowserSelect,
-                                   BrowserExtractText, BrowserBack, BrowserScreenshot, BrowserDownload]
+                                   BrowserFillForm, BrowserExtractText, BrowserBack, BrowserScreenshot, BrowserDownload]

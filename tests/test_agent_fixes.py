@@ -178,3 +178,65 @@ def test_unverified_completion_is_never_shown_as_done(fresh_sandbox, settings):
     assert report["status"] == "needs_review"
     assert report["summary"].startswith("NOT VERIFIED.")
     assert "independent check found" in report["summary"]
+
+
+def test_typed_value_echo_is_not_a_source():
+    """D7: the browser's "Typed '2026-10-05'" echo must not count as provenance for that same value."""
+    from types import SimpleNamespace
+
+    from worker.safety.review import _corpus, unsourced_values
+
+    def ev(name, output):
+        return SimpleNamespace(type="tool_result", data={"name": name, "output": output})
+
+    history = [ev("browser_navigate", "Invoice INV-G-203  Date 2026-09-05  Total USD 2,400.00"),
+               ev("browser_type", "Typed '2026-10-05' into element 13.")]
+    ctx = SimpleNamespace(task_text="Log Globex Ltd's latest invoice.", events=SimpleNamespace(history=history))
+    fields = {"invoice_date": "2026-09-05", "due_date": "2026-10-05", "amount": "2400.00"}
+    assert unsourced_values(fields, _corpus(ctx)) == [("due_date", "2026-10-05")]
+
+
+@pytest.mark.asyncio
+async def test_fill_form_fills_and_submits_in_one_call(fresh_sandbox, settings):
+    """browser_fill_form: every field plus the submit click in one tool call (data entry in ~2 steps, not ~9)."""
+    from .test_agent_loop import DUE, ISSUED, bills_for
+
+    def fill_and_save(st):
+        snap = st.last_output
+        return turn(call("browser_fill_form", submit_ref=s.find_ref(snap, r'button "Save bill"'), fields=[
+            {"ref": s.find_ref(snap, r'select "Vendor"'), "value": "Acme Corp (V-001)"},
+            {"ref": s.find_ref(snap, r'"Supplier invoice number"'), "value": "INV-ACME-1102"},
+            {"ref": s.find_ref(snap, r'"Invoice date"'), "value": ISSUED},
+            {"ref": s.find_ref(snap, r'"Due date"'), "value": DUE},
+            {"ref": s.find_ref(snap, r'"Total amount"'), "value": "4812.75"}]))
+
+    script = headline_executor_script()
+    i = script.index(s.click_save)
+    script[i - 1:i + 2] = [fill_and_save]                     # replace fill (5 calls) + snapshot + click
+    llm = ScriptedLLM(scripts={"executor": script,
+                               "verifier": [turn(call("browser_navigate", url=f"{s.ERP}/bills?q=INV-ACME-1102")),
+                                            s.verdict(True, "Bill found")]},
+                      structured_responses={"TaskSpec": s.spec()})
+    report = await Agent(llm, settings, ScriptedHumanChannel()).run("Enter the latest ACME invoice into the ERP")
+    assert report["status"] == "succeeded", report
+    rows = bills_for("INV-ACME-1102")
+    assert len(rows) == 1 and rows[0]["amount_cents"] == 481275 and rows[0]["due_date"] == DUE
+    assert report["actions"] and report["actions"][0]["fields"]["invoice_number"] == "INV-ACME-1102"
+
+
+def test_name_collision_check_is_deterministic():
+    """F1 on a weaker model: the LLM reviewer missed a second matching vendor. The deterministic check does not."""
+    from worker.safety.review import name_collisions, name_phrases
+
+    assert name_phrases("Log Northwind Traders' September invoices.") == ["Northwind Traders"]
+    rows = ("| V-0101 | Contoso Ltd | billing@contoso.example |\n"
+            "| V-0102 | Contoso Holdings Pvt Ltd | ar@contoso-holdings.example |\n"
+            "[7:select \"Vendor\" options: Contoso Ltd (V-0101), Contoso Holdings Pvt Ltd (V-0102), Fabrikam (V-0103)]\n"
+            "| V-0103 | Fabrikam | ap@fabrikam.example |")
+    both = name_collisions("Log the latest Contoso invoice.", {"vendor_id": "V-0102"}, [rows])
+    assert both == ["Contoso Ltd (V-0101)", "Contoso Holdings Pvt Ltd (V-0102)"]
+    # whole words only, and a one-line dropdown listing every vendor never counts
+    assert name_collisions("Log the latest invoice from Contoso Ltd.", {"vendor_id": "V-0101"}, [rows]) == []
+    assert name_collisions("Log Fabrikam's invoice.", {"vendor_id": "V-0103"}, [rows]) == []
+    # no entity reference in the write -> nothing to check
+    assert name_collisions("Log the latest Contoso invoice.", {"invoice_number": "X-1"}, [rows]) == []

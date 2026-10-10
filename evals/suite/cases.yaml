@@ -140,7 +140,7 @@ cases:
     switches: [outage]
     expect: {claim: not_done, no_other_writes: true, mentions: [["1,12,100", "112100", "112,100"]]}
     extra_checks:
-      - {tag: H4, check: summary_or_notes, mentions: [["503", "unavailable", "down", "outage", "not responding", "error"], ["nothing", "not entered", "not recorded", "not saved", "no changes", "wasn't", "was not", "not created"], ["try again", "retry", "later", "once", "when", "manually", "next"]]}
+      - {tag: H4, check: summary_or_notes, mentions: [["503", "unavailable", "down", "outage", "not responding", "error"], ["nothing", "not entered", "not recorded", "not saved", "no changes", "wasn't", "was not", "not created", "could not", "couldn't", "unable to", "not been"], ["try again", "retry", "later", "once", "when", "manually", "next"]]}
   - {id: D6, task: "Find the latest invoice from Acme Corp, extract the amount and due date, enter it into our internal system, and tell me once it is done.", switches: [broken-pdf-link], expect: *a1}
   - id: D7
     task: Log Globex Ltd's latest invoice.
