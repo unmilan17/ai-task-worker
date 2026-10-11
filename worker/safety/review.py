@@ -218,8 +218,7 @@ def unnamed_entity(task: str, fields: dict[str, Any], outputs: list[str]) -> tup
             continue
         # Only look-alikes: the written entity's own rows share a word with the name the user gave.
         words = {w.lower() for p in phrases for w in re.findall(r"[A-Za-z]{3,}", p)}
-        rows = [ln for out in outputs for ln in out.splitlines()
-                if set(family.findall(ln)) == {value}]
+        rows = [ln for ln in _rows(outputs) if set(family.findall(ln)) == {value}]
         if any(re.search(r"\b" + re.escape(w) + r"\b", ln, re.I) for w in words for ln in rows):
             return f"{_row_name(value, rows)} ({value})", [f"{name} ({eid})" for eid, name in sorted(named.items())]
     return None
@@ -257,17 +256,40 @@ def _ids_named(phrase: str, family: re.Pattern, outputs: list[str]) -> dict[str,
     """ID -> shortest name, for table rows (one ID of this kind per line) that contain `phrase` as whole words."""
     pat = re.compile(r"\b" + r"\s+".join(map(re.escape, phrase.split())) + r"\b", re.I)
     found: dict[str, str] = {}
-    for out in outputs:
-        for line in out.splitlines():
-            ids = set(family.findall(line))
-            if len(ids) != 1 or not pat.search(line):
-                continue
-            eid = ids.pop()
-            cells = [c.strip() for c in re.split(r"\||\t", line) if pat.search(c)]
-            name = re.sub(r"\s*\(" + re.escape(eid) + r"\)", "", cells[0] if cells else phrase).strip()
-            if eid not in found or len(name) < len(found[eid]):
-                found[eid] = name[:80]
+    for line in _rows(outputs):
+        ids = set(family.findall(line))
+        if len(ids) != 1 or not pat.search(line):
+            continue
+        eid = ids.pop()
+        cells = [c.strip() for c in re.split(r"\||\t", line) if pat.search(c)]
+        name = re.sub(r"\s*\(" + re.escape(eid) + r"\)", "", cells[0] if cells else phrase).strip()
+        if eid not in found or len(name) < len(found[eid]):
+            found[eid] = name[:80]
     return found
+
+
+def _rows(outputs: list[str]):
+    """Every line the worker saw, plus one ' | '-joined row per JSON record (an API response spreads one record
+    over many lines, so its ID and name would never share a line)."""
+    for out in outputs:
+        yield from out.splitlines()
+        start = min((i for i in (out.find("{"), out.find("[")) if i >= 0), default=-1)
+        if start < 0:
+            continue
+        try:
+            data = json.loads(out[start:])
+        except ValueError:
+            continue
+        stack = [data]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, list):
+                stack.extend(item)
+            elif isinstance(item, dict):
+                scalars = [str(v) for v in item.values() if isinstance(v, (str, int, float)) and not isinstance(v, bool)]
+                if scalars:
+                    yield " | ".join(scalars)
+                stack.extend(v for v in item.values() if isinstance(v, (dict, list)))
 
 
 def _flatten(d: Any, prefix: str = ""):

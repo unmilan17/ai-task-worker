@@ -251,7 +251,7 @@ Summary below. Each one is explained with the alternatives in **[docs/DESIGN_DEC
 
 * **60-case test suite** (`python -m worker suite`), run against the second seed with the suite's fault
   switches and graded from the databases with the suite's verdicts. Every case is mapped in
-  **[docs/TEST_SUITE_GAP_ANALYSIS.md](docs/TEST_SUITE_GAP_ANALYSIS.md)**. Live so far (Gemini free tier): **37 case variants judged, 32 passing on their latest run, zero false success**. Every failure led to a generic fix (no task-specific code), and the remaining 5 are fixed and awaiting a live re-run; 9 cases still need free quota.
+  **[docs/TEST_SUITE_GAP_ANALYSIS.md](docs/TEST_SUITE_GAP_ANALYSIS.md)**. Live (Gemini free tier, 2026-10-10/11): **every live case variant (46) has been run, and the latest run of each passes**. Earlier runs surfaced 1 false success and several silent-damage results. Each was fixed with a generic change (DESIGN_DECISIONS D18–D31) and re-run live; there is no task-specific code (the G7 audit checks this). One run per case, not ×3.
 
 Details and results: **[docs/EVALUATION.md](docs/EVALUATION.md)**.
 

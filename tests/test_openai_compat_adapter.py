@@ -376,3 +376,18 @@ async def test_a_dropped_connection_is_retried(monkeypatch):
     llm = _client(api, monkeypatch, "m")
     turn = await llm.conversation("S", executor_registry().specs()).send(user_text="go")
     assert turn.tool_calls[0].name == "browser_navigate" and calls["n"] == 3 and sleeps[:2] == [5, 10]
+
+
+@pytest.mark.asyncio
+async def test_a_provider_overload_is_waited_out(monkeypatch):
+    """Live J4: Gemini answered 503 "This model is currently experiencing high demand" and the run ended."""
+    import asyncio as aio
+
+    async def fast_sleep(s):
+        pass
+    monkeypatch.setattr(aio, "sleep", fast_sleep)
+    overloaded = {"error": {"code": 503, "message": "This model is currently experiencing high demand.",
+                            "status": "UNAVAILABLE"}}
+    api = MockAPI([(503, overloaded), (200, TURN_1)])
+    turn = await _client(api, monkeypatch, "m").conversation("S", executor_registry().specs()).send(user_text="go")
+    assert turn.tool_calls[0].name == "browser_navigate" and len(api.requests) == 2

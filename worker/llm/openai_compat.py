@@ -332,13 +332,14 @@ class OpenAICompatClient(LLMClient):
                             f"(finish_reason={resp.choices[0].finish_reason}).")
 
     async def _send(self, kwargs: dict[str, Any]):
-        """One API call; a dropped connection is retried after 5, 10 and 20 s before giving up."""
+        """One API call; a dropped connection or a provider overload (5xx, e.g. Gemini's 503 "high demand") is
+        retried after 5, 10 and 20 s before giving up."""
         for i in range(4):
             try:
                 return await self.client.chat.completions.create(**kwargs)
-            except self._openai.APIConnectionError as e:
+            except (self._openai.APIConnectionError, self._openai.InternalServerError) as e:
                 if i == 3:
-                    raise ProviderUnreachable(f"Could not reach {self.provider} at {self.client.base_url} "
+                    raise ProviderUnreachable(f"{self.provider} unavailable at {self.client.base_url} "
                                               f"(4 attempts over ~35 s): {e}") from e
                 if self.on_wait:
                     self.on_wait(5 * 2 ** i)

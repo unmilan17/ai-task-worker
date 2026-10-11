@@ -419,3 +419,31 @@ Two related fixes from the same night:
 
 The first two are code checks, because model judgement on scope proved unreliable. A5 is a prompt rule, because
 deciding which records are relevant needs judgement.
+
+### D30. Clean workspace per case; records read from JSON count as rows
+**Choice:**
+- **Clean workspace.** The suite runner empties `workspace/downloads` and `workspace/outbox` before every case.
+- **Prompt rule.** Files already in the workspace may be leftovers from earlier tasks, so the agent acts on one only
+  after confirming the document exists in the source system now.
+- **JSON records.** The scope and name-collision checks turn every JSON record (an API response) into one row,
+  so an ID and its name are matched even when pretty-printing puts them on different lines.
+
+**Why (live re-runs, 2026-10-11):**
+- **B5.** "Log Initech's latest invoice" (no such invoice exists in this seed). The agent listed its workspace,
+  found `INIT-560.pdf`, which had been downloaded by an earlier run on the *other* seed, and logged it. That is a
+  harness isolation bug; a real worker can also meet stale files, hence the prompt rule too.
+- **B1.** The agent read the vendor directory through the API. The D29 scope check only matched an ID and a name
+  on the same line, so it never fired, and the look-alike vendor was billed again. Replayed on that trace, the
+  fixed check blocks the look-alike write and allows the right one.
+
+### D31. Workplace meaning belongs in the onboarding config, not in agent code
+**Choice:** "a supplier is up to date when every invoice received from it is recorded as a bill" is now a company
+rule in both workplaces' `environment.yaml` (the onboarding document the agent reads), not a prompt or code
+change.
+
+**Why (live B1, batch 8):** after D29 forbade widening the task to look-alike vendors, the agent read "Make sure Acme
+Corp is up to date" as "check the vendor profile", found nothing to change, and reported success. The independent
+checker shared that reading, so this was the first **false success** of the day: INV-1057 had not been entered.
+What "up to date" means is a convention of this workplace, the kind of thing a new employee is told on day one.
+Putting it in the onboarding config keeps the agent generic, and it shows the right lever: one sentence of
+workplace knowledge, not task-specific code.

@@ -120,6 +120,10 @@ explain how it could be done.
 - Lists may be paginated or sorted in surprising ways; check the sort order and all pages before concluding
   what is "latest" or "missing".
 - To read a PDF: browser_download (by link ref or URL), then file_read the saved path.
+- "It does not exist" is a valid result. Search each system once, properly (its filter or search, all pages);
+  if the thing is not there, stop and say so with what you checked - do not keep re-reading the same lists.
+- Files already in your workspace may be left over from earlier tasks. Never act on one unless the same
+  document exists in the source system now (find it there, or download it again in this task).
 - For dropdowns use browser_select with the visible option text.
 - To fill a form, use browser_fill_form: all fields (and the submit button) in one call instead of one call per
   field. Repetitive data entry (many similar records) is much faster this way, or through a documented API.

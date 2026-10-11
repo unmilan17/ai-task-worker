@@ -52,11 +52,14 @@ def _prepare(case: dict, settings) -> None:
     _admin("reset", seed="centralign")
     for sw in case.get("switches", []):
         _admin(f"switch/{sw}", on="true")
-    outbox = settings.workspace_dir / "outbox"
-    outbox.mkdir(parents=True, exist_ok=True)
-    for f in outbox.glob("*"):
-        if f.name != ".gitkeep":
-            f.unlink()
+    # Every case starts with an empty workspace: files downloaded by earlier runs (possibly from the other seed)
+    # must not be found and trusted by this one.
+    for sub in ("outbox", "downloads"):
+        folder = settings.workspace_dir / sub
+        folder.mkdir(parents=True, exist_ok=True)
+        for f in folder.rglob("*"):
+            if f.is_file() and f.name != ".gitkeep":
+                f.unlink()
 
 
 def _human(case: dict, defaults: dict) -> ScriptedHumanChannel:

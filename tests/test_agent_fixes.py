@@ -299,3 +299,18 @@ def test_verifier_running_out_of_steps_keeps_the_answer_unverified(fresh_sandbox
     report = asyncio.run(Agent(llm, settings, ScriptedHumanChannel()).run("Log X's latest invoice"))
     assert report["status"] == "needs_review"
     assert "There is no invoice from X." in report["summary"] and "could not confirm" in report["summary"]
+
+
+def test_scope_check_reads_records_from_json_api_responses():
+    """Live B1 re-run: the vendor list came from the API as pretty-printed JSON (ID and name on separate lines)."""
+    import json as _json
+
+    from worker.safety.review import unnamed_entity
+
+    api = "GET http://erp/api/vendors -> HTTP 200\n" + _json.dumps({"vendors": [
+        {"vendor_id": "V-0101", "name": "Contoso Ltd"},
+        {"vendor_id": "V-0102", "name": "Contoso Holdings Pvt Ltd"}]}, indent=2)
+    task = "Make sure Contoso Ltd is up to date in the finance system."
+    assert unnamed_entity(task, {"vendor_id": "V-0102"}, [api]) == ("Contoso Holdings Pvt Ltd (V-0102)",
+                                                                     ["Contoso Ltd (V-0101)"])
+    assert unnamed_entity(task, {"vendor_id": "V-0101"}, [api]) is None
