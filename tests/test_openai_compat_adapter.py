@@ -353,3 +353,26 @@ def test_providers_that_need_parameters_get_an_empty_schema():
     bare = [to_openai_tool({"name": "snap", "description": "d", "input_schema": {"type": "object", "properties": {}}})]
     assert "parameters" not in tools_for("gemini", bare)[0]["function"]          # Gemini rejects empty objects
     assert tools_for("mistral", bare)[0]["function"]["parameters"] == {"type": "object", "properties": {}}
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_connection_is_retried(monkeypatch):
+    """Live: the network was down for a minute at the start of a batch and every case failed instantly."""
+    import asyncio as aio
+    sleeps = []
+
+    async def fast_sleep(s):
+        sleeps.append(s)
+    monkeypatch.setattr(aio, "sleep", fast_sleep)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise httpx2.ConnectError("network down")
+        return httpx2.Response(200, json=TURN_1)
+    api = MockAPI([])
+    api.handler = handler
+    llm = _client(api, monkeypatch, "m")
+    turn = await llm.conversation("S", executor_registry().specs()).send(user_text="go")
+    assert turn.tool_calls[0].name == "browser_navigate" and calls["n"] == 3 and sleeps[:2] == [5, 10]

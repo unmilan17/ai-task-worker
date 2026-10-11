@@ -23,8 +23,8 @@ import time
 from typing import Any, Callable
 
 from .base import Conversation, LLMClient, T
-from .openai_compat import (EmptyResponse, OpenAICompatClient, QuotaExhausted, RateLimited, RequestTooLarge,
-                            _CompatConversation)
+from .openai_compat import (EmptyResponse, OpenAICompatClient, ProviderUnreachable, QuotaExhausted, RateLimited,
+                            RequestTooLarge, _CompatConversation)
 
 EXHAUSTED_RECHECK_S = 3600
 _EXHAUSTED: dict[tuple[str, str], float] = {}     # (provider, model) -> when its quota was found used up
@@ -92,6 +92,9 @@ class FallbackClient(LLMClient):
                 continue
             except RateLimited:
                 problems.append(f"{c.provider}:{c.model} (rate-limited)")
+                continue
+            except ProviderUnreachable:
+                problems.append(f"{c.provider}:{c.model} (unreachable)")
                 continue
             _EXHAUSTED.pop(key, None)
             if i != self.active and self.on_switch:

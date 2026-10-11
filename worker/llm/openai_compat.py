@@ -238,6 +238,10 @@ class RequestTooLarge(LLMError):
     """This model's limits cannot fit the request at all (e.g. a free tier's tokens-per-minute cap)."""
 
 
+class ProviderUnreachable(LLMError):
+    """The provider could not be reached for about half a minute (network down, DNS, provider outage)."""
+
+
 class RateLimited(LLMError):
     """Still rate-limited after the allowed waits (a busy free tier). Another model may be free right now."""
 
@@ -326,11 +330,24 @@ class OpenAICompatClient(LLMClient):
         raise EmptyResponse(f"{self.provider}:{self.model} returned an empty reply twice "
                             f"(finish_reason={resp.choices[0].finish_reason}).")
 
+    async def _send(self, kwargs: dict[str, Any]):
+        """One API call; a dropped connection is retried after 5, 10 and 20 s before giving up."""
+        for i in range(4):
+            try:
+                return await self.client.chat.completions.create(**kwargs)
+            except self._openai.APIConnectionError as e:
+                if i == 3:
+                    raise ProviderUnreachable(f"Could not reach {self.provider} at {self.client.base_url} "
+                                              f"(4 attempts over ~35 s): {e}") from e
+                if self.on_wait:
+                    self.on_wait(5 * 2 ** i)
+                await asyncio.sleep(5 * 2 ** i)
+
     async def _create(self, kwargs: dict[str, Any], messages: list[dict[str, Any]], est: int):
         for attempt in range(self.rate_retries + 1):
             entry = await self.limiter.acquire(est, self.on_wait)
             try:
-                resp = await self.client.chat.completions.create(**kwargs)
+                resp = await self._send(kwargs)
                 break
             except self._openai.RateLimitError as e:
                 q = parse_quota_error(e.body, str(e))
@@ -357,15 +374,13 @@ class OpenAICompatClient(LLMClient):
                     # Gemini's documented placeholder signature (a second failure is raised, not retried).
                     kwargs["messages"] = prepare_messages(messages, self.model, dummy_signatures=True)
                     try:
-                        resp = await self.client.chat.completions.create(**kwargs)
+                        resp = await self._send(kwargs)
                         break
                     except self._openai.APIError as e2:
                         raise LLMError(f"{self.provider} rejected the request: {e2}") from e2
                 if _too_large(e):
                     raise RequestTooLarge(f"{self.provider}:{self.model} cannot take a request this large: {e}") from e
                 raise LLMError(f"{self.provider} rejected the request: {e}") from e
-            except self._openai.APIConnectionError as e:
-                raise LLMError(f"Could not reach {self.provider} at {self.client.base_url}: {e}") from e
             except self._openai.APIStatusError as e:
                 if e.status_code == 413 or _too_large(e):
                     raise RequestTooLarge(f"{self.provider}:{self.model} cannot take a request this large: {e}") from e
