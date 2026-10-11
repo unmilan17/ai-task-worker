@@ -80,6 +80,8 @@ async def _run_live(case: dict, defaults: dict, headed: bool) -> tuple[list[dict
         a = agent(keep_open=True)
         try:
             reports.append(await a.run(case["task"]))
+            for sw in case.get("switches_before_followups", []):     # something happens between the turns
+                _admin(f"switch/{sw}", on="true")
             for msg in case.get("followups", []):
                 reports.append(await a.follow_up(msg))
         finally:

@@ -397,3 +397,25 @@ Two related fixes from the same night:
   then gives this request to the next model. Before, it retried six times at 30 s each and then failed the run.
   Providers that require `parameters` on every tool (Mistral) get an empty schema per request; Gemini rejects
   one, so it is added only where needed.
+
+### D29. Stay in scope: exact names decide, look-alikes are other records
+**Choice:** two deterministic rules in the pre-write review, plus matching prompt rules.
+- **Scope check (`unnamed_entity`).** A write that references an entity the user did not name is blocked when the
+  request's name matches a different entity of the same kind and the written one is a look-alike (it shares a word
+  with that name). Only an answer that explicitly names the extra record unlocks it.
+- **Exact name wins (`exactly_named`).** If the LLM reviewer reports "multiple candidates" but the request uses one
+  candidate's full name, the verdict is overruled and no question is asked.
+- **Prompt rules.** "Use your judgement" means the narrowest reading of the user's exact words. Questions (totals,
+  status) must look in every system that can hold relevant records and say what was counted. Actions the rules allow
+  with approval (deletes, payments) are never "out of scope", and the model must not invent rules.
+
+**Why (live, 2026-10-11):**
+- **B1.** "Make sure Acme Corp is up to date". The LLM reviewer called the exact name ambiguous and asked. The scripted
+  "use your best judgement" reply then led the worker to also write a bill for the look-alike Acme Corporation Pvt
+  Ltd (silent damage).
+- **F5.** "Delete … old invoices" was refused up front with an invented "record retention" rule, instead of listing
+  the invoices and asking.
+- **A5.** "How much do we owe" counted only the bills already entered, not the invoice received but not yet entered.
+
+The first two are code checks, because model judgement on scope proved unreliable. A5 is a prompt rule, because
+deciding which records are relevant needs judgement.

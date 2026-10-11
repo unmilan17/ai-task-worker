@@ -169,3 +169,13 @@ def test_reset_clears_switches(centralign_sandbox):
     switch("outage")
     httpx.post(f"{ERP}/__admin/reset", params={"seed": "centralign"})
     assert httpx.get(f"{ERP}/__admin/health").json()["switches"] == []
+
+
+def test_revised_invoice_email_arrives_with_its_switch(centralign_sandbox):
+    """The revision is 'sent' between G4's turns; before that, no case may see it (A1/F1/F7 expect the original)."""
+    inbox = lambda: httpx.get(config.MAIL_URL + "/").text
+    assert "Revised invoice INV-1057" not in inbox()
+    assert httpx.get(config.MAIL_URL + "/message/m-302").status_code == 404
+    switch("revision-sent")
+    assert "Revised invoice INV-1057" in inbox()
+    assert httpx.get(config.MAIL_URL + "/attachments/m-302/INV-1057-R.pdf").content.startswith(b"%PDF")

@@ -197,27 +197,77 @@ def name_collisions(task: str, fields: dict[str, Any], outputs: list[str]) -> li
     X-0102), return a label per candidate. Only lines with exactly one ID of that kind count (a table row), so a
     dropdown listing every vendor on one line cannot create a false alarm. Whole words only: 'Contoso Ltd' does not
     match 'Contoso Ltda'."""
-    phrases = name_phrases(task)
-    refs = [(k, str(v)) for k, v in _flatten(fields) if re.search(r"(^|_)id$", k.split(".")[-1], re.I)
-            and _ID_VALUE.match(str(v).strip())]
-    for _, value in refs:
-        family = re.compile(r"\b" + re.escape(_ID_VALUE.match(value.strip()).group(1)) + r"\d{2,}\b")
-        for phrase in phrases:
-            pat = re.compile(r"\b" + r"\s+".join(map(re.escape, phrase.split())) + r"\b", re.I)
-            found: dict[str, str] = {}
-            for out in outputs:
-                for line in out.splitlines():
-                    ids = set(family.findall(line))
-                    if len(ids) != 1 or not pat.search(line):
-                        continue
-                    eid = ids.pop()
-                    cells = [c.strip() for c in re.split(r"\||\t", line) if pat.search(c)]
-                    name = re.sub(r"\s*\(" + re.escape(eid) + r"\)", "", cells[0] if cells else phrase).strip()
-                    if eid not in found or len(name) < len(found[eid]):
-                        found[eid] = name[:80]
+    for value, family in _entity_refs(fields):
+        for phrase in name_phrases(task):
+            found = _ids_named(phrase, family, outputs)
             if len(found) >= 2:
                 return [f"{name} ({eid})" for eid, name in sorted(found.items())]
     return []
+
+
+def unnamed_entity(task: str, fields: dict[str, Any], outputs: list[str]) -> tuple[str, list[str]] | None:
+    """Scope check: the write references an entity the user did not name, while the user's words do name another
+    entity of the same kind (asked about 'Contoso Ltd' = X-0101, about to write for X-0102 'Contoso Holdings').
+    Returns (the written ID, labels of the entities the request names), or None."""
+    phrases = name_phrases(task)
+    for value, family in _entity_refs(fields):
+        named: dict[str, str] = {}
+        for phrase in phrases:
+            named.update(_ids_named(phrase, family, outputs))
+        if not named or value in named:
+            continue
+        # Only look-alikes: the written entity's own rows share a word with the name the user gave.
+        words = {w.lower() for p in phrases for w in re.findall(r"[A-Za-z]{3,}", p)}
+        rows = [ln for out in outputs for ln in out.splitlines()
+                if set(family.findall(ln)) == {value}]
+        if any(re.search(r"\b" + re.escape(w) + r"\b", ln, re.I) for w in words for ln in rows):
+            return f"{_row_name(value, rows)} ({value})", [f"{name} ({eid})" for eid, name in sorted(named.items())]
+    return None
+
+
+def _row_name(eid: str, rows: list[str]) -> str:
+    """The display name next to an ID in table rows: 'Name (ID)' cells first, else the first plain text cell."""
+    cells = [c.strip() for ln in rows for c in re.split(r"\||\t", ln)]
+    for c in cells:
+        if c.endswith(f"({eid})"):
+            return c[: -len(eid) - 2].strip()
+    plain = [c for c in cells if re.search(r"[A-Za-z]{3,}", c) and eid not in c and "[" not in c]
+    return plain[0][:80] if plain else eid
+
+
+def exactly_named(task: str, candidates: list[str]) -> str | None:
+    """If the request uses one candidate's full name ('Contoso Ltd' among 'Contoso Ltd (X-0101)' and 'Contoso
+    Holdings (X-0102)'), that candidate is meant - a look-alike name is a different record, not an ambiguity."""
+    phrases = {p.lower() for p in name_phrases(task)}
+    exact = [c for c in candidates if re.sub(r"\s*\([^)]*\)\s*$", "", c).strip().lower() in phrases]
+    return exact[0] if len(exact) == 1 else None
+
+
+def _entity_refs(fields: dict[str, Any]) -> list[tuple[str, re.Pattern]]:
+    """(value, pattern for IDs of the same kind) for every '..._id' field holding an ID-like value."""
+    out = []
+    for k, v in _flatten(fields):
+        m = _ID_VALUE.match(str(v).strip())
+        if m and re.search(r"(^|_)id$", k.split(".")[-1], re.I):
+            out.append((str(v).strip(), re.compile(r"\b" + re.escape(m.group(1)) + r"\d{2,}\b")))
+    return out
+
+
+def _ids_named(phrase: str, family: re.Pattern, outputs: list[str]) -> dict[str, str]:
+    """ID -> shortest name, for table rows (one ID of this kind per line) that contain `phrase` as whole words."""
+    pat = re.compile(r"\b" + r"\s+".join(map(re.escape, phrase.split())) + r"\b", re.I)
+    found: dict[str, str] = {}
+    for out in outputs:
+        for line in out.splitlines():
+            ids = set(family.findall(line))
+            if len(ids) != 1 or not pat.search(line):
+                continue
+            eid = ids.pop()
+            cells = [c.strip() for c in re.split(r"\||\t", line) if pat.search(c)]
+            name = re.sub(r"\s*\(" + re.escape(eid) + r"\)", "", cells[0] if cells else phrase).strip()
+            if eid not in found or len(name) < len(found[eid]):
+                found[eid] = name[:80]
+    return found
 
 
 def _flatten(d: Any, prefix: str = ""):
@@ -292,6 +342,19 @@ class WriteReviewer:
                 raise ToolError(ErrorKind.UNSOURCED,
                                 f"Write blocked before it ran: these values do not appear in anything you read, "
                                 f"were told, or computed with a tool: {listing}.")
+        if action.fields:
+            outputs = [str(e.data["output"]) for e in ctx.events.history
+                       if e.type in ("tool_result", "observation") and e.data.get("output")
+                       and e.data.get("name") not in _ECHO_TOOLS]
+            stray = unnamed_entity(ctx.task_text, action.fields, outputs)
+            if stray and not _answered(ctx, [stray[0]]):
+                self._record(ctx, action, "out_of_scope", f"{stray[0]} is not what the request names "
+                                                          f"({', '.join(stray[1])})")
+                raise ToolError(ErrorKind.VALIDATION,
+                                f"Write blocked before it ran: it is for {stray[0]}, but the request names "
+                                f"{' / '.join(stray[1])}. A similar name is a different record.",
+                                "Do only what the user asked for. Leave this record out, unless the user explicitly "
+                                "names it; 'use your judgement' does not widen the task.")
         if self.clarifications >= MAX_CLARIFICATIONS_PER_RUN:
             return
         if action.fields:
@@ -310,6 +373,9 @@ class WriteReviewer:
         verdict = await self._ask_reviewer(action, ctx, corpus)
         if verdict is None or not verdict.ambiguous:
             self._record(ctx, action, "ok", verdict.explanation if verdict else "review skipped (model error)")
+            return
+        if verdict.kind == "multiple_candidates" and (exact := exactly_named(ctx.task_text, verdict.candidates)):
+            self._record(ctx, action, "ok", f"the request uses the exact name of {exact}; look-alikes are other records")
             return
         concrete = len(verdict.candidates) >= 2 or (verdict.kind == "missing_value" and verdict.candidates)
         if not concrete or not verdict.question.strip():

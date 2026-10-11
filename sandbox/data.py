@@ -102,6 +102,7 @@ class Email:
     received: str            # ISO datetime-ish string
     body: str
     attachment: str | None = None   # doc id of a PDF attachment, if any
+    arrives_with: str | None = None  # a fault switch that delivers this email later (default: already there)
 
 
 @dataclass

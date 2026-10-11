@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from . import config, state
+from .chaos import chaos
 from .common import admin_router, install_chaos, templates
 
 app = FastAPI(title="Webmail", docs_url=None, redoc_url=None, openapi_url=None)
@@ -20,15 +21,20 @@ app.include_router(admin_router())
 MAILBOX = "ap-team@northwind.example"
 
 
+def _emails():
+    """The inbox as it is now: an email that arrives with a switch is only there once the switch is on."""
+    return [e for e in state.current_seed().emails if not e.arrives_with or chaos.on(e.arrives_with)]
+
+
 @app.get("/", response_class=HTMLResponse)
 def inbox(request: Request):
-    emails = sorted(state.current_seed().emails, key=lambda e: e.received, reverse=True)
+    emails = sorted(_emails(), key=lambda e: e.received, reverse=True)
     return templates.TemplateResponse(request, "mail/inbox.html", {"emails": emails, "mailbox": MAILBOX})
 
 
 @app.get("/message/{email_id}", response_class=HTMLResponse)
 def message(request: Request, email_id: str):
-    email = next((e for e in state.current_seed().emails if e.email_id == email_id), None)
+    email = next((e for e in _emails() if e.email_id == email_id), None)
     if not email:
         return HTMLResponse("<h1>404 - Message not found</h1>", status_code=404)
     return templates.TemplateResponse(request, "mail/message.html", {"e": email, "mailbox": MAILBOX})
@@ -36,7 +42,7 @@ def message(request: Request, email_id: str):
 
 @app.get("/attachments/{email_id}/{filename}")
 def attachment(email_id: str, filename: str):
-    email = next((e for e in state.current_seed().emails if e.email_id == email_id), None)
+    email = next((e for e in _emails() if e.email_id == email_id), None)
     if not email or not email.attachment or filename != f"{email.attachment}.pdf":
         return HTMLResponse("<h1>404 - Attachment not found</h1>", status_code=404)
     return FileResponse(config.PDF_DIR / filename, media_type="application/pdf", filename=filename)

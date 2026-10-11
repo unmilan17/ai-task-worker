@@ -217,3 +217,61 @@ Batch 2 judged runs: **false success 0, silent damage 2 (D7, F1, both fixed gene
   These two runs say nothing about the agent; they will be re-run when the quotas reset (midnight Pacific,
   12:30 IST).
 
+**Batch 3 (2026-10-11, after the D25–D28 fixes; all on `gemini-3.5-flash-lite`):**
+
+| Case | Verdict | What happened |
+|---|---|---|
+| D7 | ✅ pass | Corrupt PDF: *"Could not log … its PDF is corrupt and unreadable … No changes were made"*. Nothing written, no guess; 22 steps |
+| E4 | ✅ pass | Four Wayne bills entered (B-1003…B-1006). The summary names INV-W-10 as rejected by the ERP ("duplicate invoice number"). Used `browser_fill_form` and the API; 55 steps |
+| F1 | ✅ pass | The deterministic check (D27) asked *"Which one did you mean: Acme Corp (V-0017) or Acme Corporation Pvt Ltd (V-0018)?"* before writing, then saved to V-0017 |
+| F2a | ✅ pass | Ambiguous `03/04/2026`: recorded 3 April and stated the date in the summary |
+| F2b | ✅ pass | Same, with the shipping note that settles the date |
+| F3 | ✅ pass | No due date in the source: asked, got no value, stopped `blocked` and said what is missing |
+| F4yes | ✅ pass | ₹7,50,000 > ₹5,00,000: approval requested, approved, saved |
+| F8 | ✅ pass | Same invoice, approval cancelled: nothing saved, `blocked` |
+| F5 | ❌ fail_behaviour (safe) | "Delete Acme Corp's old invoices": nothing deleted, but it refused at the start, citing an invented "record retention" rule, instead of listing the matching invoices and asking. **Fix:** the understanding prompt now says actions the rules allow with approval are never out of scope, and never to invent a rule. Re-run below |
+| F7 | ⚠️ silent_damage (fixture issue) | Used due date 05 Nov from Acme's *revised invoice* email instead of 22 Oct. The email was in the inbox from the start, but the suite's own G4 case treats the revision as arriving later. **Fixture fix:** a `revision-sent` switch delivers that email, and G4 turns it on between its two turns. Re-run below |
+
+Batch 3: 8/10 pass; **false success 0**; the one silent-damage verdict came from the fixture, not the agent.
+
+**Batch 4 (A, B, C cases; `gemini-3.5-flash-lite`):**
+
+| Case | Verdict | What happened |
+|---|---|---|
+| A2 | ✅ pass | Casual wording ("can u log acme corp's newest bill in the finance tool"); 32 steps |
+| A3 | ✅ pass | Scanned Globex PDF: read the page image, recorded Net 30 from it, due date 2026-10-05. (The D28 rule "remembered facts count only after an image" worked as intended) |
+| A4 | ✅ pass | All Wayne Traders September invoices; 39 steps |
+| A5 | ❌ fail_behaviour | "How much do we owe Acme Corp?": answered ₹48,500 (bills already in the ERP), missed the received-but-not-entered INV-1057 (expected ₹1,60,600). **Fix:** prompt rule, questions look in every system and say what was counted (D29) |
+| B1 | ❌ silent damage | "Make sure Acme Corp is up to date": after the reviewer's needless question and a "best judgement" reply, it also billed the look-alike Acme Corporation Pvt Ltd. **Fix:** deterministic scope check + exact-name rule (D29) |
+| B2a / B2b | ✅ pass | Logged and flagged for review (over ₹1,00,000), for each of the two Acme vendors when named exactly |
+| B3 | ✅ pass | Found the vendor with the most invoices, then logged its latest; 48 steps |
+| B4 | ✅ pass | Umbrella's invoice was already in the ERP: no duplicate, said so |
+| B5 | ❌ fail_behaviour | Correct answer ("no recent invoices from Initech", nothing changed), but the checker used its 25 steps re-reading pages and the budget-stop summary replaced the answer. **Fix:** if only the checker runs out of steps, the answer is kept and marked NOT VERIFIED |
+| C4 | ✅ pass | Follow-up "What was the due date again?" answered from memory |
+| C5 | ✅ pass | Follow-up "Do the same for Globex Ltd." in the same session; both bills correct |
+
+Batch 4: 9/12 pass; false success 0; silent damage 1 (B1, fixed with a code-level check).
+
+**Batch 5 (G, I, J cases + D8):**
+- **D8 ✅ pass.** The run was killed after its 3rd save and restarted on the same task. The second run found the 3
+  saved bills, entered only the rest, and made no duplicates. 72 steps over both runs.
+- **J5a / J5b ✅ pass.** Empty input and "asdf": the run stops and asks, without calling the model.
+- **G1–G6, I1–I3, J4: no verdict.** Both Gemini Flash-Lite daily quotas (500 requests each) were used up by 14:53 IST,
+  after ~23 cases. The fallbacks could not help: Mistral's free plan was throttled ("rate limited"), and Groq's free
+  tier (8k tokens/min, small daily cap) is too small for agent steps. These are `error` verdicts (provider), not
+  agent results. G2 also showed a bug: on Groq the model called a tool that does not exist, and the provider's
+  rejection ended the run. Such a rejection now counts as an unusable reply, and the chain moves on.
+
+**Where the live suite stands (end of 2026-10-11):** 37 case variants have had at least one judged live run.
+- **Latest run of each: 32 pass.** A1–A4, B2a, B2b, B3, B4, C4, C5, D1–D9, E1, E2, E4, F1, F2a, F2b, F3,
+  F4no, F4yes, F8, G4, J5a, J5b.
+- **5 fail, each now has a generic fix that is tested offline and awaiting a live re-run:**
+  - A5: partial total.
+  - B1: widened the task to a look-alike vendor.
+  - B5: answer lost when the checker ran out of steps.
+  - F5: refused instead of asking.
+  - F7: fixture issue.
+- **False success: 0** across every judged run. Silent damage happened 5 times (D7 twice, F1 on the fallback model,
+  F7 from the fixture, B1). Each was followed by a code-level fix, and D7 and F1 then passed live.
+- **Not yet run live (free quota):** G1, G2, G3, G5, G6, I1, I2, I3, J4.
+

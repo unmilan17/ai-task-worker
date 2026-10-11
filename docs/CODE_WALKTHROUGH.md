@@ -48,7 +48,7 @@ ai-task-worker/
 │   ├── data.py                seed data model + the default "northwind" seed (with the deliberate traps)
 │   ├── seed_centralign.py     the 60-case test suite's fixtures (second seed)
 │   ├── supplierhub.py / erp.py / mail.py / helpdesk.py   the four apps
-│   ├── chaos.py               fault injection: modes + 14 named switches
+│   ├── chaos.py               fault injection: modes + 15 named switches
 │   ├── state.py / pdfgen.py / launcher.py / common.py / config.py
 │   └── templates/             HTML for the apps
 ├── config/environment.yaml    what the worker knows about its workplace

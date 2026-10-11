@@ -247,6 +247,7 @@ cases:
     kind: followups
     task: Find the latest invoice from Acme Corp, extract the amount and due date, enter it into our internal system, and tell me once it is done.
     followups: ["Acme Corp sent a revised INV-1057. Update our record."]
+    switches_before_followups: [revision-sent]          # the revised invoice email arrives after the first turn
     expect:
       claim: done
       bills: [{invoice_number: INV-1057, vendor_id: V-0017, amount: 112100.00, due_date: "2026-11-05"}]

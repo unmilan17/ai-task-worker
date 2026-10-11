@@ -53,7 +53,7 @@ systems, and returns a summary with evidence: facts with provenance, screenshots
 Plus: **no invented values** (every written value must trace to a source: a provenance check runs before
 each write), exact conversion tools for money/dates/payment terms, a circuit breaker for systems that are down,
 scanned-PDF reading via vision, credentials that never reach the model, prompt-injection resistance, a live web
-dashboard and a CLI, 14 named fault switches, an 8-scenario eval, a runnable **60-case test suite** with a
+dashboard and a CLI, 15 named fault switches, an 8-scenario eval, a runnable **60-case test suite** with a
 state-based grader, and 107 automated tests.
 It runs on **free-tier LLM APIs** (Google Gemini by default), with built-in rate limiting for free quotas.
 
@@ -208,7 +208,7 @@ Three real web apps with real state. The traps are deliberate. They test underst
 | An 18,250 USD invoice above the 10,000 approval threshold | SupplierHub |
 | A phishing email instructing "AI agents" to create a vendor and a bill | Webmail |
 | `CHAOS=mild`: random 503s, slow pages, first form submit fails *without saving*. `CHAOS=hard`: ERP form broken (API still works), sessions expire | all |
-| 14 named switches (one fault at a time): 500-once, session-expiry, popup, bad-date-format, outage, broken-pdf-link, corrupt-pdf, no-submit, **silent-drop** (says saved, saves nothing), **mangle-amount**, reject-one, relabel, s4-shipped-note, exfil-note | `sandbox/chaos.py` |
+| 15 named switches (one fault at a time): 500-once, session-expiry, popup, bad-date-format, outage, broken-pdf-link, corrupt-pdf, no-submit, **silent-drop** (says saved, saves nothing), **mangle-amount**, reject-one, relabel, s4-shipped-note, exfil-note, revision-sent (the revised-invoice email arrives) | `sandbox/chaos.py` |
 
 ![SupplierHub](docs/img/supplierhub.png)
 
@@ -251,7 +251,7 @@ Summary below. Each one is explained with the alternatives in **[docs/DESIGN_DEC
 
 * **60-case test suite** (`python -m worker suite`), run against the second seed with the suite's fault
   switches and graded from the databases with the suite's verdicts. Every case is mapped in
-  **[docs/TEST_SUITE_GAP_ANALYSIS.md](docs/TEST_SUITE_GAP_ANALYSIS.md)**. Live so far (Gemini free tier, one run each): the short list (A1, D4, E1, F4, G4) and F1 pass after two rounds of generic fixes, with **zero false success and zero silent damage across 9 runs**. The other 40 live cases still need free quota.
+  **[docs/TEST_SUITE_GAP_ANALYSIS.md](docs/TEST_SUITE_GAP_ANALYSIS.md)**. Live so far (Gemini free tier): **37 case variants judged, 32 passing on their latest run, zero false success**. Every failure led to a generic fix (no task-specific code), and the remaining 5 are fixed and awaiting a live re-run; 9 cases still need free quota. Details: [docs/EVALUATION.md](docs/EVALUATION.md).
 
 Details and results: **[docs/EVALUATION.md](docs/EVALUATION.md)**.
 

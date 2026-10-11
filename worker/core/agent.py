@@ -35,7 +35,7 @@ from ..safety.review import WriteReviewer
 from ..safety.secrets import SecretVault
 from ..tools.browser import BrowserSession
 from ..tools.registry import executor_registry
-from .loop import Budget, BudgetExceeded, Cancelled, ToolLoop
+from .loop import Budget, BudgetExceeded, Cancelled, StepLimit, ToolLoop
 from .prompts import (EXECUTOR_KICKOFF, EXECUTOR_SYSTEM, FOLLOWUP_KICKOFF, VERIFY_FAILED_FEEDBACK,
                       environment_block, fill)
 from .report import build_report
@@ -199,8 +199,13 @@ class Agent:
             for round_no in range(self.settings.max_verify_rounds + 1):
                 if claim.get("status") not in ("completed", "no_action_needed") or answered_from_memory:
                     break
-                verdict = await verify(self.llm, ctx, self.budget, self._task_context(text, follow_up), spec,
-                                       claim, environment, actions_from=actions_before)
+                try:
+                    verdict = await verify(self.llm, ctx, self.budget, self._task_context(text, follow_up), spec,
+                                           claim, environment, actions_from=actions_before)
+                except StepLimit as e:      # the check could not finish: keep the worker's answer, unverified
+                    verdicts.append({"method": "auditor", "passed": False, "inconclusive": True,
+                                     "summary": f"the independent check could not finish ({e})"})
+                    break
                 verdicts.append(verdict)
                 if verdict.get("passed") or round_no == self.settings.max_verify_rounds:
                     break
@@ -213,8 +218,10 @@ class Agent:
             status, reason = _final_status(claim, verdicts, answered_from_memory)
             if status == "needs_review" and verdicts:
                 # Never show the user an unverified "done" as if it were true.
+                found = ("The independent check could not confirm it: " if verdicts[-1].get("inconclusive")
+                         else "But an independent check found: ")
                 claim = {**claim, "summary": f"NOT VERIFIED. The worker reported: \"{claim.get('summary', '')}\" "
-                                             f"But an independent check found: {verdicts[-1].get('summary', '')}"}
+                                             f"{found}{verdicts[-1].get('summary', '')}"}
         except _Stop as s:
             status, reason = s.status, s.reason
         except (Cancelled, BudgetExceeded, LLMError, Exception) as e:  # noqa: BLE001 - always produce a report
@@ -320,6 +327,8 @@ def _final_status(claim: dict[str, Any], verdicts: list[dict[str, Any]],
             if st == "no_action_needed":
                 return "succeeded", "Nothing needed to change - independently verified."
             return "succeeded", "Completed and independently verified."
+        if verdicts and verdicts[-1].get("inconclusive"):
+            return "needs_review", "The worker reported completion; the independent check could not finish - please review."
         return "needs_review", "The worker reported completion but verification did not pass - please review."
     if st == "blocked":
         return "blocked", "Stopped safely: needs a decision or information from the user."

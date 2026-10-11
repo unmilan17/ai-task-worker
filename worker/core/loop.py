@@ -33,6 +33,10 @@ class BudgetExceeded(Exception):
     pass
 
 
+class StepLimit(BudgetExceeded):
+    """A loop with its own step cap (the verifier) used it up; the run's overall budget is not exhausted."""
+
+
 class Cancelled(Exception):
     pass
 
@@ -122,7 +126,7 @@ class ToolLoop:
                     continue
                 self.budget.check(self.counts_steps)
                 if self.max_steps is not None and self.local_steps >= self.max_steps:
-                    raise BudgetExceeded(f"{self.label} step limit ({self.max_steps}) reached")
+                    raise StepLimit(f"{self.label} step limit ({self.max_steps}) reached")
                 if self.counts_steps:
                     self.budget.steps += 1
                 self.local_steps += 1

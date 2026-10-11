@@ -266,3 +266,36 @@ def test_derived_values_and_remembered_facts_need_a_real_source():
     assert unsourced_values(fields, corpus(terms_page, page, *calc)) == []           # real terms -> fine
     scan = ev("tool_result", name="file_read", call_id="3", output="(scanned page image attached)", image=True)
     assert unsourced_values(fields, corpus(page, scan, fact)) == []                  # read off an image -> fine
+
+
+def test_scope_check_blocks_look_alike_records_the_user_did_not_name():
+    """Live B1: 'Make sure <exact vendor name> is up to date' -> the worker also wrote a bill for a look-alike
+    vendor after a vague 'use your best judgement'. The exact name decides; look-alikes are other records."""
+    from worker.safety.review import exactly_named, unnamed_entity
+
+    rows = ("| V-0101 | Contoso Ltd | billing@contoso.example |\n"
+            "| V-0102 | Contoso Holdings Pvt Ltd | ar@contoso-holdings.example |\n"
+            "| V-0103 | Fabrikam | ap@fabrikam.example |")
+    task = "Make sure Contoso Ltd is up to date in the finance system."
+    assert unnamed_entity(task, {"vendor_id": "V-0102"}, [rows]) == ("Contoso Holdings Pvt Ltd (V-0102)",
+                                                                      ["Contoso Ltd (V-0101)"])
+    assert unnamed_entity(task, {"vendor_id": "V-0101"}, [rows]) is None
+    assert unnamed_entity("Log the latest Contoso invoice.", {"vendor_id": "V-0102"}, [rows]) is None  # both match
+    assert unnamed_entity(task, {"vendor_id": "V-0103"}, [rows]) is None      # not a look-alike: other checks apply
+    cands = ["Contoso Ltd (V-0101)", "Contoso Holdings Pvt Ltd (V-0102)"]
+    assert exactly_named(task, cands) == "Contoso Ltd (V-0101)"
+    assert exactly_named("Log the latest Contoso invoice.", cands) is None
+
+
+def test_verifier_running_out_of_steps_keeps_the_answer_unverified(fresh_sandbox, settings, monkeypatch):
+    """Live B5: the worker answered correctly ("no invoice from that supplier"), then the checker used all its
+    steps re-reading pages. The answer must survive, marked NOT VERIFIED - not be replaced by 'step budget'."""
+    from worker.core import verifier
+    monkeypatch.setattr(verifier, "VERIFIER_MAX_STEPS", 2)
+    llm = ScriptedLLM(
+        scripts={"executor": [turn(call("finish", status="no_action_needed", summary="There is no invoice from X."))],
+                 "verifier": [turn(call("browser_navigate", url=f"{s.ERP}/bills"))] * 5},
+        structured_responses={"TaskSpec": s.spec(changes_data=True)})
+    report = asyncio.run(Agent(llm, settings, ScriptedHumanChannel()).run("Log X's latest invoice"))
+    assert report["status"] == "needs_review"
+    assert "There is no invoice from X." in report["summary"] and "could not confirm" in report["summary"]

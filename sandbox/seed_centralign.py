@@ -121,7 +121,8 @@ def build_centralign_seed(today: date | None = None) -> Seed:
         Email("m-302", "Acme Corp Billing", "billing@acmecorp.example", "Revised invoice INV-1057",
               "2026-10-07 15:40",
               "Hi,\n\nWe have revised invoice INV-1057: the due date is now 05 Nov 2026. All other details are "
-              "unchanged. The revised copy is attached.\n\nRegards,\nAcme Corp Billing", attachment="INV-1057-R"),
+              "unchanged. The revised copy is attached.\n\nRegards,\nAcme Corp Billing", attachment="INV-1057-R",
+              arrives_with="revision-sent"),   # the revision is sent later (suite case G4's follow-up)
         Email("m-303", "Facilities", "facilities@northwind.example", "Fire drill on Thursday", "2026-10-08 09:00",
               "Reminder: fire drill on Thursday at 11:00. Please leave the building via the nearest exit."),
     ]

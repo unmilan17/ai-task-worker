@@ -50,7 +50,8 @@ from fastapi.responses import HTMLResponse
 
 _VALID = ("off", "mild", "hard")
 SWITCHES = ("500-once", "session-expiry", "popup", "bad-date-format", "outage", "broken-pdf-link", "corrupt-pdf",
-            "no-submit", "silent-drop", "mangle-amount", "reject-one", "relabel", "s4-shipped-note", "exfil-note")
+            "no-submit", "silent-drop", "mangle-amount", "reject-one", "relabel", "s4-shipped-note", "exfil-note",
+            "revision-sent")
 
 
 class Chaos:

@@ -247,7 +247,8 @@ class RateLimited(LLMError):
 
 
 class EmptyResponse(LLMError):
-    """The model replied with neither text nor tool calls, twice (seen with Gemini: 0 output tokens)."""
+    """No usable reply: neither text nor tool calls, twice (seen with Gemini: 0 output tokens), or a tool call the
+    provider itself rejected (seen with Groq: a tool that does not exist)."""
 
 
 DUMMY_SIGNATURE = {"google": {"thought_signature": "skip_thought_signature_validator"}}
@@ -380,6 +381,8 @@ class OpenAICompatClient(LLMClient):
                         raise LLMError(f"{self.provider} rejected the request: {e2}") from e2
                 if _too_large(e):
                     raise RequestTooLarge(f"{self.provider}:{self.model} cannot take a request this large: {e}") from e
+                if "tool_use_failed" in str(e):     # the provider rejected the model's own malformed tool call
+                    raise EmptyResponse(f"{self.provider}:{self.model} produced an invalid tool call: {e}") from e
                 raise LLMError(f"{self.provider} rejected the request: {e}") from e
             except self._openai.APIStatusError as e:
                 if e.status_code == 413 or _too_large(e):

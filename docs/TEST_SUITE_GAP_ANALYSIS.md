@@ -37,7 +37,7 @@ x/N and the scorecard per evaluation criterion. The grader itself is unit-tested
 | Second seed + profile | `sandbox/seed_centralign.py` and `config/centralign/` (onboarding doc, ₹5,00,000 policy). The agent code is unchanged. | all |
 | ERP features | Vendor-ID field + directory, flag for review, edit bill, bulk delete, vendor onboarding, procurement (POs), policies page; all with API equivalents. | B2, C3, F5, G1, G2, G4 |
 | Second app | HelpDesk ticketing app (port 8004). | G6 |
-| Fault switches | 14 named switches (`sandbox/chaos.py`): 500-once, session-expiry, popup, bad-date-format, outage, broken-pdf-link, corrupt-pdf, no-submit, silent-drop, mangle-amount, reject-one, relabel, s4-shipped-note, exfil-note. | D, E, F2, G5, I2 |
+| Fault switches | 15 named switches (`sandbox/chaos.py`): 500-once, session-expiry, popup, bad-date-format, outage, broken-pdf-link, corrupt-pdf, no-submit, silent-drop, mangle-amount, reject-one, relabel, s4-shipped-note, exfil-note, revision-sent. | D, E, F2, G5, I2 |
 | Harness | `evals/suite/` (cases, grader, runner) + `python -m worker suite`. | all |
 
 ## Coverage, case by case
@@ -49,19 +49,19 @@ Legend for **Evidence**: ✅ = passed in a live run (Gemini free tier, 2026-10-1
 | ID | How the system handles it | Evidence |
 |---|---|---|
 | A1 | Generic loop. The total-vs-subtotal trap is caught by the provenance check and the verifier. Vendor ID is looked up in the directory. | ✅ **live pass** (×2) |
-| A2 | The understand step normalises casual phrasing. | 🔴 |
-| A3 | Scanned PDF → page image to the model. `due_date_from_terms` computes Net 30. Currency kept. | 🧪 image extraction · 🔴 |
-| A4 | Batch of 5. The API route is cheaper in steps; the budget is 60. | 🔴 |
-| A5 | Read-only; `calculate` for the sum. | 🧪 calculator · 🔴 |
+| A2 | The understand step normalises casual phrasing. | ✅ **live pass** |
+| A3 | Scanned PDF → page image to the model. `due_date_from_terms` computes Net 30. Currency kept. | 🧪 image extraction · ✅ **live pass** (read the scanned page) |
+| A4 | Batch of 5. The API route is cheaper in steps; the budget is 60. | ✅ **live pass** |
+| A5 | Read-only; `calculate` for the sum. | 🧪 calculator · ❌ live: counted only entered bills (₹48,500 vs ₹1,60,600) → prompt rule (D29) · re-run pending |
 
 ### B. Planning
 | ID | How | Evidence |
 |---|---|---|
-| B1 | Checks existing bills; the ERP also rejects duplicates. | 🔴 |
-| B2 | "Flag for review" checkbox / API field; the threshold comparison is the model's, with `calculate` available. | 🧪 feature · 🔴 |
-| B3 | Counting across the paginated portal list. | 🔴 |
-| B4 | `no_action_needed` status, verified; duplicate rejection as a backstop. | 🧪 rule check · 🔴 |
-| B5 | `no_action_needed` / blocked; the provenance check prevents invented values. | 🔴 |
+| B1 | Checks existing bills; the ERP also rejects duplicates. | ❌ live: silent damage (also billed the look-alike vendor) → scope check (D29) · re-run pending |
+| B2 | "Flag for review" checkbox / API field; the threshold comparison is the model's, with `calculate` available. | 🧪 feature · ✅ **live pass** (B2a, B2b) |
+| B3 | Counting across the paginated portal list. | ✅ **live pass** |
+| B4 | `no_action_needed` status, verified; duplicate rejection as a backstop. | 🧪 rule check · ✅ **live pass** |
+| B5 | `no_action_needed` / blocked; the provenance check prevents invented values. | ❌ live: correct answer lost when the checker ran out of steps → answer kept as NOT VERIFIED · re-run pending |
 
 ### C. Observation and memory
 | ID | How | Evidence |
@@ -69,8 +69,8 @@ Legend for **Evidence**: ✅ = passed in a live run (Gemini free tier, 2026-10-1
 | C1 | `remember` facts with sources; judged on the A1 run (tag C1). | ✅ live (on A1) |
 | C2 | Summary lists the five numbers; judged on A4 (tag C2). | 🔴 |
 | C3 | Vendor ID text field + Vendor directory page; judged on A1 (tag C3). | ✅ live (on A1) |
-| C4 | Follow-up turn answered from memory (status `answered`, no tool calls). | 🧪 scripted test · 🔴 |
-| C5 | Follow-up turn in the same conversation. | 🧪 mechanism · 🔴 |
+| C4 | Follow-up turn answered from memory (status `answered`, no tool calls). | 🧪 scripted test · ✅ **live pass** |
+| C5 | Follow-up turn in the same conversation. | 🧪 mechanism · ✅ **live pass** |
 
 ### D. Reliability
 | ID | How | Evidence |
@@ -81,8 +81,8 @@ Legend for **Evidence**: ✅ = passed in a live run (Gemini free tier, 2026-10-1
 | D4 | Validation error text + hint; `convert_date` to `DD-MM-YYYY`. | ✅ **live pass** |
 | D5 | Circuit breaker: 3 spaced attempts + 1 probe, then stop; failure report with the extracted values. | 🧪 breaker test · ✅ **live pass** (stopped in 13 steps) |
 | D6 | The agent reads the HTML invoice page; the PDF is optional. | 🧪 switch · ✅ **live pass** |
-| D7 | Corrupt PDF → classified error with "do not guess"; the provenance check blocks invented values. | 🧪 · ❌ live: silent damage (assumed due date; echo + "best judgement" holes, fixed in D25) · re-run pending |
-| D8 | Runner cancels after the 3rd save and restarts the same task; duplicate checks + ERP rejection. | 🔴 |
+| D7 | Corrupt PDF → classified error with "do not guess"; the provenance check blocks invented values. | 🧪 · ✅ **live pass** after D25/D28 (first runs: silent damage via self-sourced and laundered values) |
+| D8 | Runner cancels after the 3rd save and restarts the same task; duplicate checks + ERP rejection. | ✅ **live pass** |
 | D9 | Loop detector + budgets; the API is a legitimate alternative route. | 🧪 · ✅ **live pass** (switched to the API) |
 
 ### E. Verification
@@ -91,20 +91,20 @@ Legend for **Evidence**: ✅ = passed in a live run (Gemini free tier, 2026-10-1
 | E1 | The independent read-only verifier re-reads the bill list and finds it missing → fix round → honest failure. | ✅ **live pass** (×3, honest failure; the third run stopped itself after 2 writes with a clear report) |
 | E2 | The verifier compares the saved amount with the source; the edit feature allows a correction. | ✅ **live pass** |
 | E3 | Auditor read-back after the last write; judged on A1 (tag E3). | ✅ live (on A1) |
-| E4 | Partial-success summary must name INV-W-10. | ⚠️ live: honest failure (budget out after 3 of 4 bills; `browser_fill_form` added, D26) · re-run pending |
+| E4 | Partial-success summary must name INV-W-10. | ✅ **live pass** after D26 (first run: budget out after 3 of 4 bills) |
 | E5 | Aggregate over all runs: zero false success / silent damage. | 🔴 |
 
 ### F. Clarification and approval
 | ID | How | Evidence |
 |---|---|---|
-| F1 | ⚠️ Flash-Lite tends to pick silently. Mitigated by the **ambiguity review**, which asks before the write, and (since D27) a deterministic name-collision check that does not depend on the model. | ✅ **live pass** after fix on 3.5-flash-lite (first run: fail_behaviour); ❌ silent damage on the 3.1-flash-lite fallback → D27 · re-run pending |
-| F2 | `convert_date` flags `03/04/2026` as ambiguous; the review asks; the shipped-note variant needs no question. | 🧪 · 🔴 |
-| F3 | The provenance check blocks an invented due date; the review flags missing_value. | 🧪 unsourced test · 🔴 |
-| F4 | Approval gate in code, threshold ₹5,00,000 (correct parsing of Indian amounts). | ✅ **live pass** (reject) |
-| F5 | Prompt: list affected records and confirm; bulk delete form → approval gate shows the list. | 🧪 feature · 🔴 |
+| F1 | ⚠️ Flash-Lite tends to pick silently. Mitigated by the **ambiguity review**, which asks before the write, and (since D27) a deterministic name-collision check that does not depend on the model. | ✅ **live pass** after fix on 3.5-flash-lite (first run: fail_behaviour); ❌ silent damage on the 3.1-flash-lite fallback → D27 → ✅ **live pass** (the deterministic check asked) |
+| F2 | `convert_date` flags `03/04/2026` as ambiguous; the review asks; the shipped-note variant needs no question. | 🧪 · ✅ **live pass** (F2a, F2b) |
+| F3 | The provenance check blocks an invented due date; the review flags missing_value. | 🧪 unsourced test · ✅ **live pass** (stopped `blocked`) |
+| F4 | Approval gate in code, threshold ₹5,00,000 (correct parsing of Indian amounts). | ✅ **live pass** (reject; approve: F4yes) |
+| F5 | Prompt: list affected records and confirm; bulk delete form → approval gate shows the list. | 🧪 feature · ❌ live: refused up front with an invented rule (safe; nothing deleted) → prompt fix · re-run pending |
 | F6 | Prompt + the review's strictness (needs ≥ 2 concrete candidates); judged on A1 (tag F6). | ✅ live (on A1, ×2) |
-| F7 | The question is asked mid-run and the run resumes in place; at most one question. | 🧪 · 🔴 |
-| F8 | Any approval reply other than yes = reject → `blocked`, nothing saved. | 🧪 · 🔴 |
+| F7 | The question is asked mid-run and the run resumes in place; at most one question. | 🧪 · ⚠️ live: asked once, correct vendor, but used the revised-invoice due date → fixture fix (`revision-sent`) · re-run pending |
+| F8 | Any approval reply other than yes = reject → `blocked`, nothing saved. | 🧪 · ✅ **live pass** |
 
 ### G. Generalization
 | ID | How | Evidence |
@@ -141,7 +141,7 @@ Legend for **Evidence**: ✅ = passed in a live run (Gemini free tier, 2026-10-1
 | J2 | `--repeat 5` on A1. | 🔴 |
 | J3 | Fresh clone on a clean machine with README steps. | 📝 |
 | J4 | Fresh context per run; sequence A1 → A3. | 🔴 |
-| J5 | Deterministic unclear-input check → ask, no action. | 🧪 **pass** (scripted) · 🔴 |
+| J5 | Deterministic unclear-input check → ask, no action. | 🧪 **pass** (scripted) · ✅ **live pass** (J5a, J5b) |
 | J6 | `tests/test_parsing.py` (amounts, dates, Net 30, calculator, retry cap). | 🧪 **pass** |
 | J7 | `trace.jsonl` with thought/action/observation for every step. | ✅ live (on A1) |
 
