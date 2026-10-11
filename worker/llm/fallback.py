@@ -7,7 +7,8 @@ failing at 3 pm because the quota is gone, the FallbackClient tries the models o
 * a model whose daily quota is exhausted is skipped for an hour (remembered process-wide, so the next
   run does not waste a request on it);
 * a model that cannot take a request this large (e.g. Groq's free tokens-per-minute cap), or that replies
-  with nothing at all (twice), is skipped for that request only;
+  with nothing at all (twice), or that is still rate-limited after a short wait, is skipped for that
+  request only;
 * every switch is reported (``on_switch``) so the trace and the UI show which model did what.
 
 Mid-run switches are safe for the history: each stored reply is tagged with the model that wrote it,
@@ -22,7 +23,7 @@ import time
 from typing import Any, Callable
 
 from .base import Conversation, LLMClient, T
-from .openai_compat import (EmptyResponse, OpenAICompatClient, QuotaExhausted, RequestTooLarge,
+from .openai_compat import (EmptyResponse, OpenAICompatClient, QuotaExhausted, RateLimited, RequestTooLarge,
                             _CompatConversation)
 
 EXHAUSTED_RECHECK_S = 3600
@@ -35,6 +36,8 @@ class FallbackClient(LLMClient):
             raise ValueError("FallbackClient needs at least one client")
         super().__init__(clients[0].model)
         self.clients = clients
+        for c in clients[:-1]:          # with a next model to try, do not sit out a busy free tier for minutes
+            c.rate_retries = min(c.rate_retries, 1)
         self.active = 0
         self.provider = clients[0].provider
         self.preset = clients[0].preset
@@ -86,6 +89,9 @@ class FallbackClient(LLMClient):
                 continue
             except EmptyResponse:
                 problems.append(f"{c.provider}:{c.model} (empty reply)")
+                continue
+            except RateLimited:
+                problems.append(f"{c.provider}:{c.model} (rate-limited)")
                 continue
             _EXHAUSTED.pop(key, None)
             if i != self.active and self.on_switch:

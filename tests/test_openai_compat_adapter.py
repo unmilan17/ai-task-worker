@@ -329,3 +329,27 @@ async def test_empty_replies_move_the_request_to_the_next_model(monkeypatch):
     turn = await llm.conversation("S", executor_registry().specs()).send(user_text="go")
     assert turn.tool_calls[0].name == "browser_navigate" and llm.model == "ok"
     assert len(a.requests) == 2 and fallback._EXHAUSTED == {}       # not marked as out of quota
+
+
+@pytest.mark.asyncio
+async def test_a_busy_model_is_skipped_after_one_short_wait(monkeypatch):
+    """Seen live: a free tier answering 429 "Rate limit exceeded" for minutes. With another model in the chain,
+    wait once, then send this request to the next model instead of failing the run."""
+    from worker.llm import fallback
+    from worker.llm.fallback import FallbackClient
+    monkeypatch.setattr(fallback, "_EXHAUSTED", {})
+    busy = {"error": {"code": 429, "message": "Rate limit exceeded",
+                      "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0s"}]}}
+    a = MockAPI([(429, busy), (429, busy)])
+    b = MockAPI([(200, TURN_1)])
+    llm = FallbackClient([_client(a, monkeypatch, "busy"), _client(b, monkeypatch, "free")])
+    turn = await llm.conversation("S", executor_registry().specs()).send(user_text="go")
+    assert turn.tool_calls[0].name == "browser_navigate" and llm.model == "free"
+    assert len(a.requests) == 2 and fallback._EXHAUSTED == {}
+
+
+def test_providers_that_need_parameters_get_an_empty_schema():
+    from worker.llm.openai_compat import to_openai_tool, tools_for
+    bare = [to_openai_tool({"name": "snap", "description": "d", "input_schema": {"type": "object", "properties": {}}})]
+    assert "parameters" not in tools_for("gemini", bare)[0]["function"]          # Gemini rejects empty objects
+    assert tools_for("mistral", bare)[0]["function"]["parameters"] == {"type": "object", "properties": {}}

@@ -161,6 +161,18 @@ def sanitize_schema(s: dict[str, Any]) -> dict[str, Any]:
     return s
 
 
+# Providers that reject a function without "parameters" (Gemini, in turn, rejects an empty object schema, so
+# no-argument tools leave it out by default and get it added per request here).
+_NEEDS_PARAMETERS = {"mistral"}
+
+
+def tools_for(provider: str, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if provider not in _NEEDS_PARAMETERS:
+        return tools
+    return [t if "parameters" in t["function"] else
+            {**t, "function": {**t["function"], "parameters": {"type": "object", "properties": {}}}} for t in tools]
+
+
 def to_openai_tool(spec: dict[str, Any]) -> dict[str, Any]:
     fn: dict[str, Any] = {"name": spec["name"], "description": spec["description"]}
     params = spec.get("input_schema") or {}
@@ -224,6 +236,10 @@ class QuotaExhausted(LLMError):
 
 class RequestTooLarge(LLMError):
     """This model's limits cannot fit the request at all (e.g. a free tier's tokens-per-minute cap)."""
+
+
+class RateLimited(LLMError):
+    """Still rate-limited after the allowed waits (a busy free tier). Another model may be free right now."""
 
 
 class EmptyResponse(LLMError):
@@ -298,7 +314,7 @@ class OpenAICompatClient(LLMClient):
         kwargs: dict[str, Any] = {"model": self.model, "messages": prepare_messages(messages, self.model),
                                   "max_tokens": self.max_tokens}
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = tools_for(self.provider, tools)
         if self.preset.reasoning_effort and self.effort in {"low", "medium", "high"}:
             kwargs["reasoning_effort"] = self.effort
         est = _estimate_tokens(messages, tools)
@@ -325,7 +341,7 @@ class OpenAICompatClient(LLMClient):
                         f"midnight Pacific time). Each model has its own quota, so you can set LLM_MODEL to "
                         f"another model meanwhile.") from e
                 if attempt == self.rate_retries:
-                    raise LLMError(f"{self.provider} rate limit still exceeded after {attempt} waits: {e}. "
+                    raise RateLimited(f"{self.provider} rate limit still exceeded after {attempt} waits: {e}. "
                                    f"Lower LLM_RPM or switch model/provider.") from e
                 if q.limit and re.search(r"request", q.metric, re.I) and re.search(r"minute", q.metric, re.I):
                     self.limiter.rpm = min(self.limiter.rpm or q.limit, q.limit)   # learn the real limit

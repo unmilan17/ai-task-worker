@@ -392,3 +392,8 @@ Two related fixes from the same night:
   calls (0 output tokens) four times, and the run ended "stopped calling tools". An empty reply is retried once.
   A second empty reply raises `EmptyResponse`, and the fallback chain tries the next model for that request
   (without marking the model's quota as used up).
+- **A busy provider is skipped, not waited out.** Mistral's free plan answered `429 Rate limit exceeded` to every
+  capable model for minutes at a time. A model that still has a next model behind it in the chain now waits once,
+  then gives this request to the next model. Before, it retried six times at 30 s each and then failed the run.
+  Providers that require `parameters` on every tool (Mistral) get an empty schema per request; Gemini rejects
+  one, so it is added only where needed.
