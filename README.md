@@ -18,6 +18,8 @@ systems, and returns a summary with evidence: facts with provenance, screenshots
 
 ![Demo](media/ai-task-worker-demo.gif)
 
+Video file (MP4, 1490×910): [media/ai-task-worker-demo.mp4](media/ai-task-worker-demo.mp4)
+
 ---
 
 ## Contents
