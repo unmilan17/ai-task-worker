@@ -14,7 +14,9 @@ systems, and returns a summary with evidence: facts with provenance, screenshots
 ![Dashboard](docs/img/dashboard.png)
 <sub>The dashboard (here replaying a scripted test run): phases, live timeline of thoughts → actions → results, live browser view, plan, working memory, changes made, and the verifier's per-criterion verdict.</sub>
 
-**Demo video:** _add link here after recording ([script](docs/DEMO_SCRIPT.md))_
+**Demo (86 s, captioned, recorded from live runs on the Gemini free tier):** a goal in plain English → real browser work → independent verification and an evidence report; a human approval above $10,000 (declined → nothing written); an ambiguous request where the worker asks instead of guessing; and a follow-up answered from memory.
+
+![Demo](media/ai-task-worker-demo.gif)
 
 ---
 
